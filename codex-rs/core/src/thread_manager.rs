@@ -571,6 +571,7 @@ impl ThreadManagerState {
         .await
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) async fn spawn_new_thread_with_source(
         &self,
         config: Config,
@@ -623,6 +624,7 @@ impl ThreadManagerState {
         .await
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) async fn fork_thread_with_source(
         &self,
         config: Config,
