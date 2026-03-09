@@ -2878,7 +2878,6 @@ pub(crate) fn default_permissions_profile_name(config: &Config) -> Option<String
     config
         .config_layer_stack
         .effective_config()
-        .clone()
         .try_into::<PermissionSelectionToml>()
         .ok()
         .and_then(|selection| selection.default_permissions)
@@ -2888,7 +2887,6 @@ pub(crate) fn next_default_permissions_profile_name(config: &Config) -> String {
     let permissions = config
         .config_layer_stack
         .effective_config()
-        .clone()
         .try_into::<ConfigToml>()
         .ok()
         .and_then(|config_toml| config_toml.permissions)
@@ -2920,7 +2918,6 @@ pub(crate) async fn persist_granted_permission_profile(
         let existing = config
             .config_layer_stack
             .effective_config()
-            .clone()
             .try_into::<ConfigToml>()
             .ok()
             .and_then(|config_toml| config_toml.permissions)
