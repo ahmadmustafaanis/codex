@@ -3119,6 +3119,10 @@ pub enum ReviewDecision {
     /// remainder of the session.
     ApprovedForSession,
 
+    /// User has approved this permissions request for the current session and
+    /// wants the granted subset persisted for future sessions.
+    ApprovedForAlways,
+
     /// User chose to persist a network policy rule (allow/deny) for future
     /// requests to the same host.
     NetworkPolicyAmendment {
@@ -3143,6 +3147,7 @@ impl ReviewDecision {
             ReviewDecision::Approved => "approved",
             ReviewDecision::ApprovedExecpolicyAmendment { .. } => "approved_with_amendment",
             ReviewDecision::ApprovedForSession => "approved_for_session",
+            ReviewDecision::ApprovedForAlways => "approved_for_always",
             ReviewDecision::NetworkPolicyAmendment {
                 network_policy_amendment,
             } => match network_policy_amendment.action {

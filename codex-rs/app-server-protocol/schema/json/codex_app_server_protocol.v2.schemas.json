@@ -7457,6 +7457,137 @@
         }
       ]
     },
+    "Result_of_CallToolResult_or_String": {
+      "oneOf": [
+        {
+          "properties": {
+            "Ok": {
+              "$ref": "#/definitions/CallToolResult"
+            }
+          },
+          "required": [
+            "Ok"
+          ],
+          "title": "OkResult_of_CallToolResult_or_String",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "Err": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "Err"
+          ],
+          "title": "ErrResult_of_CallToolResult_or_String",
+          "type": "object"
+        }
+      ]
+    },
+    "ReviewCodeLocation": {
+      "description": "Location of the code related to a review finding.",
+      "properties": {
+        "absolute_file_path": {
+          "type": "string"
+        },
+        "line_range": {
+          "$ref": "#/definitions/ReviewLineRange"
+        }
+      },
+      "required": [
+        "absolute_file_path",
+        "line_range"
+      ],
+      "type": "object"
+    },
+    "ReviewDecision": {
+      "description": "User's decision in response to an ExecApprovalRequest.",
+      "oneOf": [
+        {
+          "description": "User has approved this command and the agent should execute it.",
+          "enum": [
+            "approved"
+          ],
+          "type": "string"
+        },
+        {
+          "additionalProperties": false,
+          "description": "User has approved this command and wants to apply the proposed execpolicy amendment so future matching commands are permitted.",
+          "properties": {
+            "approved_execpolicy_amendment": {
+              "properties": {
+                "proposed_execpolicy_amendment": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                }
+              },
+              "required": [
+                "proposed_execpolicy_amendment"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "approved_execpolicy_amendment"
+          ],
+          "title": "ApprovedExecpolicyAmendmentReviewDecision",
+          "type": "object"
+        },
+        {
+          "description": "User has approved this request and wants future prompts in the same session-scoped approval cache to be automatically approved for the remainder of the session.",
+          "enum": [
+            "approved_for_session"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "User has approved this permissions request for the current session and wants the granted subset persisted for future sessions.",
+          "enum": [
+            "approved_for_always"
+          ],
+          "type": "string"
+        },
+        {
+          "additionalProperties": false,
+          "description": "User chose to persist a network policy rule (allow/deny) for future requests to the same host.",
+          "properties": {
+            "network_policy_amendment": {
+              "properties": {
+                "network_policy_amendment": {
+                  "$ref": "#/definitions/NetworkPolicyAmendment"
+                }
+              },
+              "required": [
+                "network_policy_amendment"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "network_policy_amendment"
+          ],
+          "title": "NetworkPolicyAmendmentReviewDecision",
+          "type": "object"
+        },
+        {
+          "description": "User has denied this command and the agent should not execute it, but it should continue the session and try something else.",
+          "enum": [
+            "denied"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "User has denied this command and the agent should not do anything until the user's next command.",
+          "enum": [
+            "abort"
+          ],
+          "type": "string"
+        }
+      ]
+    },
     "ReviewDelivery": {
       "enum": [
         "inline",
