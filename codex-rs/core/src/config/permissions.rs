@@ -204,9 +204,15 @@ pub(crate) fn compile_permission_profile(
 
     let network_sandbox_policy = compile_network_sandbox_policy(profile.network.as_ref());
     let macos_seatbelt_profile_extensions = profile.macos.as_ref().map(macos_permissions_from_toml);
+    let file_system_sandbox_policy = FileSystemSandboxPolicy::restricted(entries);
+    let file_system_sandbox_policy = if file_system_sandbox_policy.has_full_disk_write_access() {
+        FileSystemSandboxPolicy::unrestricted()
+    } else {
+        file_system_sandbox_policy
+    };
 
     Ok((
-        FileSystemSandboxPolicy::restricted(entries),
+        file_system_sandbox_policy,
         network_sandbox_policy,
         macos_seatbelt_profile_extensions,
     ))
@@ -329,6 +335,13 @@ fn filesystem_permissions_toml_from_policy(
 ) -> io::Result<FilesystemPermissionsToml> {
     let mut entries = BTreeMap::new();
 
+    if policy.has_full_disk_write_access() {
+        entries.insert(
+            ":root".to_string(),
+            FilesystemPermissionToml::Access(FileSystemAccessMode::Write),
+        );
+    }
+
     for entry in &policy.entries {
         let (path, permission) = filesystem_permission_toml_from_entry(entry)?;
         merge_filesystem_permission_entry(&mut entries, &path, permission);
@@ -378,6 +391,20 @@ fn filesystem_permission_toml_from_entry(
             FileSystemSpecialPath::SlashTmp => Ok((
                 ":slash_tmp".to_string(),
                 FilesystemPermissionToml::Access(access),
+            )),
+            FileSystemSpecialPath::Unknown {
+                path,
+                subpath: None,
+            } => Ok((path.clone(), FilesystemPermissionToml::Access(access))),
+            FileSystemSpecialPath::Unknown {
+                path,
+                subpath: Some(subpath),
+            } => Ok((
+                path.clone(),
+                FilesystemPermissionToml::Scoped(BTreeMap::from([(
+                    subpath.to_string_lossy().to_string(),
+                    access,
+                )])),
             )),
         },
     }

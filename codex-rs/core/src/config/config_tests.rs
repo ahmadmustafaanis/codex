@@ -25,6 +25,7 @@ use codex_protocol::permissions::FileSystemAccessMode;
 use codex_protocol::permissions::FileSystemPath;
 use codex_protocol::permissions::FileSystemSandboxEntry;
 use codex_protocol::permissions::FileSystemSandboxPolicy;
+use codex_protocol::permissions::FileSystemSandboxKind;
 use codex_protocol::permissions::FileSystemSpecialPath;
 use codex_protocol::permissions::NetworkSandboxPolicy;
 use serde::Deserialize;
@@ -679,6 +680,7 @@ fn permissions_profiles_allow_unknown_special_paths() -> std::io::Result<()> {
             )]),
         }),
         network: None,
+        macos: None,
     })?;
 
     assert_eq!(
@@ -723,6 +725,7 @@ fn permissions_profiles_allow_unknown_special_paths_with_nested_entries() -> std
             )]),
         }),
         network: None,
+        macos: None,
     })?;
 
     assert_eq!(
@@ -749,6 +752,7 @@ fn permissions_profiles_allow_missing_filesystem_with_warning() -> std::io::Resu
     let config = load_workspace_permission_profile(PermissionProfileToml {
         filesystem: None,
         network: None,
+        macos: None,
     })?;
 
     assert_eq!(
@@ -782,6 +786,7 @@ fn permissions_profiles_allow_empty_filesystem_with_warning() -> std::io::Result
             entries: BTreeMap::new(),
         }),
         network: None,
+        macos: None,
     })?;
 
     assert_eq!(
@@ -6217,6 +6222,7 @@ exclude_slash_tmp = false
     assert_eq!(parsed.default_permissions.as_deref(), Some("default"));
     let profile = parsed
         .permissions
+        .as_ref()
         .expect("permissions should be written")
         .entries
         .get("default")
@@ -6274,6 +6280,74 @@ exclude_slash_tmp = false
             accessibility: Some(true),
             calendar: Some(false),
         })
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn persist_granted_permission_profile_preserves_unrestricted_legacy_default()
+-> anyhow::Result<()> {
+    let codex_home = TempDir::new()?;
+    let cwd = TempDir::new()?;
+    std::fs::write(cwd.path().join(".git"), "gitdir: nowhere")?;
+
+    let config = Config::load_from_base_config_with_overrides(
+        toml::from_str(
+            r#"
+sandbox_mode = "danger-full-access"
+"#,
+        )
+        .expect("config should deserialize"),
+        ConfigOverrides {
+            cwd: Some(cwd.path().to_path_buf()),
+            ..Default::default()
+        },
+        codex_home.path().to_path_buf(),
+    )?;
+
+    let profile_name = persist_granted_permission_profile(
+        codex_home.path(),
+        &config,
+        &PermissionProfile::default(),
+    )
+    .await?;
+
+    assert_eq!(profile_name, "default");
+
+    let serialized = tokio::fs::read_to_string(codex_home.path().join(CONFIG_TOML_FILE)).await?;
+    let parsed: ConfigToml = toml::from_str(&serialized)?;
+    let profile = parsed
+        .permissions
+        .as_ref()
+        .expect("permissions should be written")
+        .entries
+        .get("default")
+        .cloned()
+        .expect("default profile should exist");
+
+    assert_eq!(
+        profile.filesystem,
+        Some(FilesystemPermissionsToml {
+            entries: BTreeMap::from([(
+                ":root".to_string(),
+                FilesystemPermissionToml::Access(FileSystemAccessMode::Write),
+            )]),
+        })
+    );
+
+    let reloaded = Config::load_from_base_config_with_overrides(
+        parsed,
+        ConfigOverrides {
+            cwd: Some(cwd.path().to_path_buf()),
+            ..Default::default()
+        },
+        codex_home.path().to_path_buf(),
+    )?;
+
+    assert_eq!(
+        reloaded.permissions.file_system_sandbox_policy.kind,
+        FileSystemSandboxKind::Unrestricted
     );
 
     Ok(())

@@ -2233,7 +2233,11 @@ impl Config {
                 mut file_system_sandbox_policy,
                 network_sandbox_policy,
                 macos_seatbelt_profile_extensions,
-            ) = compile_permission_profile(permissions, default_permissions)?;
+            ) = compile_permission_profile(
+                permissions,
+                default_permissions,
+                &mut startup_warnings,
+            )?;
             let mut sandbox_policy = file_system_sandbox_policy
                 .to_legacy_sandbox_policy(network_sandbox_policy, &resolved_cwd)?;
             if matches!(sandbox_policy, SandboxPolicy::WorkspaceWrite { .. }) {
