@@ -17,6 +17,7 @@ use assert_matches::assert_matches;
 use codex_config::CONFIG_TOML_FILE;
 use codex_protocol::models::FileSystemPermissions;
 use codex_protocol::models::MacOsAutomationPermission;
+use codex_protocol::models::MacOsContactsPermission;
 use codex_protocol::models::MacOsPreferencesPermission;
 use codex_protocol::models::MacOsSeatbeltProfileExtensions;
 use codex_protocol::models::NetworkPermissions;
@@ -24,8 +25,8 @@ use codex_protocol::models::PermissionProfile;
 use codex_protocol::permissions::FileSystemAccessMode;
 use codex_protocol::permissions::FileSystemPath;
 use codex_protocol::permissions::FileSystemSandboxEntry;
-use codex_protocol::permissions::FileSystemSandboxPolicy;
 use codex_protocol::permissions::FileSystemSandboxKind;
+use codex_protocol::permissions::FileSystemSandboxPolicy;
 use codex_protocol::permissions::FileSystemSpecialPath;
 use codex_protocol::permissions::NetworkSandboxPolicy;
 use serde::Deserialize;
@@ -6121,8 +6122,11 @@ calendar = true
             automations: Some(MacOsAutomationPermission::BundleIds(vec![
                 "com.apple.Calendar".to_string(),
             ])),
+            launch_services: Some(false),
             accessibility: Some(true),
             calendar: Some(true),
+            reminders: Some(false),
+            contacts: Some(MacOsContactsPermission::None),
         })
     );
 }
@@ -6158,8 +6162,11 @@ calendar = true
             macos_automation: MacOsAutomationPermission::BundleIds(vec![
                 "com.apple.Calendar".to_string(),
             ]),
+            macos_launch_services: false,
             macos_accessibility: true,
             macos_calendar: true,
+            macos_reminders: false,
+            macos_contacts: MacOsContactsPermission::None,
         })
     );
     Ok(())
@@ -6207,8 +6214,11 @@ exclude_slash_tmp = false
                 macos_automation: MacOsAutomationPermission::BundleIds(vec![
                     "com.apple.Calendar".to_string(),
                 ]),
+                macos_launch_services: false,
                 macos_accessibility: true,
                 macos_calendar: false,
+                macos_reminders: false,
+                macos_contacts: MacOsContactsPermission::None,
             }),
         },
     )
@@ -6277,8 +6287,11 @@ exclude_slash_tmp = false
             automations: Some(MacOsAutomationPermission::BundleIds(vec![
                 "com.apple.Calendar".to_string(),
             ])),
+            launch_services: Some(false),
             accessibility: Some(true),
             calendar: Some(false),
+            reminders: Some(false),
+            contacts: Some(MacOsContactsPermission::None),
         })
     );
 

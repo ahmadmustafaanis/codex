@@ -9,6 +9,7 @@ use codex_network_proxy::NetworkMode;
 use codex_network_proxy::NetworkProxyConfig;
 use codex_protocol::models::FileSystemPermissions;
 use codex_protocol::models::MacOsAutomationPermission;
+use codex_protocol::models::MacOsContactsPermission;
 use codex_protocol::models::MacOsPreferencesPermission;
 use codex_protocol::models::MacOsSeatbeltProfileExtensions;
 use codex_protocol::models::NetworkPermissions;
@@ -87,8 +88,11 @@ pub struct NetworkToml {
 pub struct MacOsPermissionsToml {
     pub preferences: Option<MacOsPreferencesPermission>,
     pub automations: Option<MacOsAutomationPermission>,
+    pub launch_services: Option<bool>,
     pub accessibility: Option<bool>,
     pub calendar: Option<bool>,
+    pub reminders: Option<bool>,
+    pub contacts: Option<MacOsContactsPermission>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
@@ -457,8 +461,11 @@ fn macos_permissions_toml_from_runtime(
     MacOsPermissionsToml {
         preferences: Some(permissions.macos_preferences.clone()),
         automations: Some(permissions.macos_automation.clone()),
+        launch_services: Some(permissions.macos_launch_services),
         accessibility: Some(permissions.macos_accessibility),
         calendar: Some(permissions.macos_calendar),
+        reminders: Some(permissions.macos_reminders),
+        contacts: Some(permissions.macos_contacts.clone()),
     }
 }
 
@@ -468,8 +475,11 @@ fn macos_permissions_from_toml(
     MacOsSeatbeltProfileExtensions {
         macos_preferences: permissions.preferences.clone().unwrap_or_default(),
         macos_automation: permissions.automations.clone().unwrap_or_default(),
+        macos_launch_services: permissions.launch_services.unwrap_or(false),
         macos_accessibility: permissions.accessibility.unwrap_or(false),
         macos_calendar: permissions.calendar.unwrap_or(false),
+        macos_reminders: permissions.reminders.unwrap_or(false),
+        macos_contacts: permissions.contacts.clone().unwrap_or_default(),
     }
 }
 

@@ -20,6 +20,7 @@ use codex_protocol::models::FileSystemPermissions;
 use codex_protocol::models::FunctionCallOutputBody;
 use codex_protocol::models::FunctionCallOutputPayload;
 use codex_protocol::models::MacOsAutomationPermission;
+use codex_protocol::models::MacOsContactsPermission;
 use codex_protocol::models::MacOsPreferencesPermission;
 use codex_protocol::models::MacOsSeatbeltProfileExtensions;
 use codex_protocol::models::NetworkPermissions;
@@ -2644,8 +2645,11 @@ async fn notify_request_permissions_response_persists_always_allow_permissions()
             macos_automation: MacOsAutomationPermission::BundleIds(vec![
                 "com.apple.Calendar".to_string(),
             ]),
+            macos_launch_services: false,
             macos_accessibility: true,
             macos_calendar: false,
+            macos_reminders: false,
+            macos_contacts: MacOsContactsPermission::None,
         }),
     };
 
