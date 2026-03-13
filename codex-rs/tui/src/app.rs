@@ -724,6 +724,7 @@ pub(crate) struct App {
     thread_event_listener_tasks: HashMap<ThreadId, JoinHandle<()>>,
     agent_navigation: AgentNavigationState,
     btw_parent_threads: HashMap<ThreadId, ThreadId>,
+    forked_from_label_overrides: HashMap<ThreadId, String>,
     active_thread_id: Option<ThreadId>,
     active_thread_rx: Option<mpsc::Receiver<Event>>,
     primary_thread_id: Option<ThreadId>,
@@ -767,6 +768,7 @@ impl App {
             app_event_tx: self.app_event_tx.clone(),
             // Fork/resume bootstraps here don't carry any prefilled message content.
             initial_user_message: None,
+            forked_from_label_override: None,
             enhanced_keys_supported: self.enhanced_keys_supported,
             auth_manager: self.auth_manager.clone(),
             models_manager: self.server.get_models_manager(),
@@ -1506,6 +1508,7 @@ impl App {
         self.abort_thread_event_listener(thread_id);
         self.thread_event_channels.remove(&thread_id);
         self.btw_parent_threads.remove(&thread_id);
+        self.forked_from_label_overrides.remove(&thread_id);
         if self.active_thread_id == Some(thread_id) {
             self.clear_active_thread().await;
         }
@@ -1517,6 +1520,24 @@ impl App {
         let store = channel.store.lock().await;
         match store.session_configured.as_ref().map(|event| &event.msg) {
             Some(EventMsg::SessionConfigured(session)) => Some(session.cwd.clone()),
+            _ => None,
+        }
+    }
+
+    async fn thread_name(&self, thread_id: ThreadId) -> Option<String> {
+        if self.chat_widget.thread_id() == Some(thread_id) {
+            return self
+                .chat_widget
+                .thread_name()
+                .filter(|name| !name.trim().is_empty());
+        }
+        let channel = self.thread_event_channels.get(&thread_id)?;
+        let store = channel.store.lock().await;
+        match store.session_configured.as_ref().map(|event| &event.msg) {
+            Some(EventMsg::SessionConfigured(session)) => session
+                .thread_name
+                .clone()
+                .filter(|name| !name.trim().is_empty()),
             _ => None,
         }
     }
@@ -1902,7 +1923,8 @@ impl App {
         self.active_thread_id = Some(thread_id);
         self.active_thread_rx = Some(receiver);
 
-        let init = self.chatwidget_init_for_forked_or_resumed_thread(tui, self.config.clone());
+        let mut init = self.chatwidget_init_for_forked_or_resumed_thread(tui, self.config.clone());
+        init.forked_from_label_override = self.forked_from_label_overrides.get(&thread_id).cloned();
         let codex_op_tx = if let Some(thread) = live_thread {
             crate::chatwidget::spawn_op_forwarder(thread)
         } else {
@@ -1922,6 +1944,7 @@ impl App {
         }
         self.drain_active_thread_events(tui).await?;
         self.refresh_pending_thread_approvals().await;
+        self.forked_from_label_overrides.remove(&thread_id);
         for btw_thread_id in btw_threads_to_discard {
             self.discard_btw_thread(btw_thread_id).await;
         }
@@ -1988,6 +2011,7 @@ impl App {
             app_event_tx: self.app_event_tx.clone(),
             // New sessions start without prefilled message content.
             initial_user_message: None,
+            forked_from_label_override: None,
             enhanced_keys_supported: self.enhanced_keys_supported,
             auth_manager: self.auth_manager.clone(),
             models_manager: self.server.get_models_manager(),
@@ -2224,6 +2248,7 @@ impl App {
                         // CLI prompt args are plain strings, so they don't provide element ranges.
                         Vec::new(),
                     ),
+                    forked_from_label_override: None,
                     enhanced_keys_supported,
                     auth_manager: auth_manager.clone(),
                     models_manager: thread_manager.get_models_manager(),
@@ -2260,6 +2285,7 @@ impl App {
                         // CLI prompt args are plain strings, so they don't provide element ranges.
                         Vec::new(),
                     ),
+                    forked_from_label_override: None,
                     enhanced_keys_supported,
                     auth_manager: auth_manager.clone(),
                     models_manager: thread_manager.get_models_manager(),
@@ -2302,6 +2328,7 @@ impl App {
                         // CLI prompt args are plain strings, so they don't provide element ranges.
                         Vec::new(),
                     ),
+                    forked_from_label_override: None,
                     enhanced_keys_supported,
                     auth_manager: auth_manager.clone(),
                     models_manager: thread_manager.get_models_manager(),
@@ -2356,6 +2383,7 @@ impl App {
             thread_event_listener_tasks: HashMap::new(),
             agent_navigation: AgentNavigationState::default(),
             btw_parent_threads: HashMap::new(),
+            forked_from_label_overrides: HashMap::new(),
             active_thread_id: None,
             active_thread_rx: None,
             primary_thread_id: None,
@@ -2804,6 +2832,7 @@ impl App {
                     Ok(forked) => {
                         let child_thread_id = forked.thread_id;
                         let parent_label = self.thread_label(parent_thread_id);
+                        let parent_thread_name = self.thread_name(parent_thread_id).await;
                         self.attach_live_thread(
                             child_thread_id,
                             Arc::clone(&forked.thread),
@@ -2813,6 +2842,10 @@ impl App {
                         .await?;
                         self.btw_parent_threads
                             .insert(child_thread_id, parent_thread_id);
+                        if let Some(parent_thread_name) = parent_thread_name {
+                            self.forked_from_label_overrides
+                                .insert(child_thread_id, parent_thread_name);
+                        }
                         self.select_agent_thread(tui, child_thread_id).await?;
                         if self.active_thread_id == Some(child_thread_id) {
                             let developer_instructions = format!(
@@ -2835,6 +2868,7 @@ Answer the user's side question directly and concisely.\n\
                             }
                         } else {
                             self.btw_parent_threads.remove(&child_thread_id);
+                            self.forked_from_label_overrides.remove(&child_thread_id);
                             self.chat_widget.add_error_message(format!(
                                 "Failed to switch into BTW thread {child_thread_id}."
                             ));
@@ -7032,6 +7066,7 @@ guardian_approval = true
             thread_event_listener_tasks: HashMap::new(),
             agent_navigation: AgentNavigationState::default(),
             btw_parent_threads: HashMap::new(),
+            forked_from_label_overrides: HashMap::new(),
             active_thread_id: None,
             active_thread_rx: None,
             primary_thread_id: None,
@@ -7093,6 +7128,7 @@ guardian_approval = true
                 thread_event_listener_tasks: HashMap::new(),
                 agent_navigation: AgentNavigationState::default(),
                 btw_parent_threads: HashMap::new(),
+                forked_from_label_overrides: HashMap::new(),
                 active_thread_id: None,
                 active_thread_rx: None,
                 primary_thread_id: None,
