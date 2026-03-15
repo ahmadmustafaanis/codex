@@ -5737,10 +5737,35 @@ mod tests {
                 .value(),
             guardian_approvals.approval_policy
         );
-        assert_eq!(app.config.permissions.sandbox_policy.value(), *smart_approvals.sandbox_policy);
         assert_eq!(
-            app.chat_widget.config_ref().permissions.sandbox_policy.value(),
-            *smart_approvals.sandbox_policy
+            app.chat_widget
+                .config_ref()
+                .permissions
+                .sandbox_policy
+                .get(),
+            &smart_approvals.sandbox_policy
+        );
+        assert_eq!(
+            app.chat_widget.config_ref().approvals_reviewer,
+            smart_approvals.approvals_reviewer
+        );
+        assert_eq!(app.runtime_approval_policy_override, None);
+        assert_eq!(app.runtime_sandbox_policy_override, None);
+        assert_eq!(
+            op_rx.try_recv(),
+            Ok(Op::OverrideTurnContext {
+                cwd: None,
+                approval_policy: Some(smart_approvals.approval_policy),
+                approvals_reviewer: Some(smart_approvals.approvals_reviewer),
+                sandbox_policy: Some(smart_approvals.sandbox_policy.clone()),
+                windows_sandbox_level: None,
+                model: None,
+                effort: None,
+                summary: None,
+                service_tier: None,
+                collaboration_mode: None,
+                personality: None,
+            })
         );
 
         let cell = match app_event_rx.try_recv() {
@@ -5753,19 +5778,13 @@ mod tests {
             .map(|line| line.to_string())
             .collect::<Vec<_>>()
             .join("\n");
-        assert!(rendered.contains("Subagents will be enabled in the next session."));
-        let op = next_user_turn_op(&mut op_rx);
-        let Op::UserTurn {
-            config_overrides, ..
-        } = op
-        else {
-            panic!("expected Op::UserTurn");
-        };
-        let overrides = config_overrides.expect("expected config overrides");
-        assert_eq!(
-            overrides.config_profile,
-            Some(format!("profiles.{}", Config::GUARDIAN_PROFILE_NAME))
-        );
+        assert!(rendered.contains("Permissions updated to Smart Approvals"));
+
+        let config = std::fs::read_to_string(codex_home.path().join("config.toml"))?;
+        assert!(config.contains("smart_approvals = true"));
+        assert!(config.contains("approvals_reviewer = \"guardian_subagent\""));
+        assert!(config.contains("approval_policy = \"on-request\""));
+        assert!(config.contains("sandbox_mode = \"workspace-write\""));
         Ok(())
     }
 
@@ -6071,7 +6090,7 @@ mod tests {
 
     #[tokio::test]
     async fn update_feature_flags_enabling_guardian_persists_only_the_feature_flag() -> Result<()> {
-        let (mut app, _app_event_rx, mut op_rx) = make_test_app_with_channels().await;
+        let (mut app, mut app_event_rx, mut op_rx) = make_test_app_with_channels().await;
         let codex_home = tempdir()?;
         app.config.codex_home = codex_home.path().to_path_buf();
         let smart_approvals = smart_approvals_mode();
