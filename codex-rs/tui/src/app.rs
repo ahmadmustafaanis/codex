@@ -2398,14 +2398,10 @@ impl App {
                         waiting_for_initial_session_configured,
                         app.active_thread_rx.is_some()
                     ) => {
-                        if let Some(event) = active {
-                            if let Err(err) = app.handle_active_thread_event(tui, event).await {
-                                break Err(err);
-                            }
-                        } else {
-                            app.clear_active_thread().await;
+                        match app.handle_active_thread_stream_event(tui, active).await {
+                            Ok(control) => control,
+                            Err(err) => break Err(err),
                         }
-                        AppRunControl::Continue
                     }
                     Some(event) = tui_events.next() => {
                         match app.handle_tui_event(tui, event).await {
@@ -3984,6 +3980,19 @@ impl App {
             tui.frame_requester().schedule_frame();
         }
         Ok(AppRunControl::Continue)
+    }
+
+    async fn handle_active_thread_stream_event(
+        &mut self,
+        tui: &mut tui::Tui,
+        event: Option<Event>,
+    ) -> Result<AppRunControl> {
+        if let Some(event) = event {
+            self.handle_active_thread_event(tui, event).await
+        } else {
+            self.clear_active_thread().await;
+            Ok(AppRunControl::Continue)
+        }
     }
 
     async fn handle_thread_created(&mut self, thread_id: ThreadId) -> Result<()> {
@@ -7773,6 +7782,33 @@ guardian_approval = true
                 },
             )
             .await?;
+        assert!(matches!(
+            control,
+            AppRunControl::Exit(ExitReason::UserRequested)
+        ));
+        assert_eq!(app.pending_shutdown_exit_thread_id, None);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn active_thread_stream_event_propagates_shutdown_exit() -> Result<()> {
+        let (mut app, _app_event_rx, _op_rx) = make_test_app_with_channels().await;
+        let mut tui = make_test_tui();
+        let thread_id = ThreadId::new();
+        app.active_thread_id = Some(thread_id);
+        app.primary_thread_id = Some(thread_id);
+        app.pending_shutdown_exit_thread_id = Some(thread_id);
+
+        let control = app
+            .handle_active_thread_stream_event(
+                &mut tui,
+                Some(Event {
+                    id: "shutdown-complete".to_string(),
+                    msg: EventMsg::ShutdownComplete,
+                }),
+            )
+            .await?;
+
         assert!(matches!(
             control,
             AppRunControl::Exit(ExitReason::UserRequested)
