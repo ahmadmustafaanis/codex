@@ -2490,42 +2490,27 @@ async fn submit_user_message_with_mode_sets_coding_collaboration_mode() {
 }
 
 #[tokio::test]
-async fn submit_user_message_with_developer_instructions_overrides_turn_mode() {
+async fn submit_user_message_as_model_turn_keeps_default_turn_mode() {
     let (mut chat, _rx, mut op_rx) = make_chatwidget_manual(Some("gpt-5")).await;
     chat.thread_id = Some(ThreadId::new());
-    let developer_instructions = "<btw_context>Answer a side question.</btw_context>".to_string();
+    let expected_collaboration_mode = chat.effective_collaboration_mode();
 
-    chat.submit_user_message_with_developer_instructions(
-        "Explore the codebase".into(),
-        developer_instructions.clone(),
-    );
+    chat.submit_user_message_as_model_turn("Explore the codebase".into());
 
     match next_submit_op(&mut op_rx) {
         Op::UserTurn {
-            collaboration_mode:
-                Some(CollaborationMode {
-                    settings:
-                        Settings {
-                            developer_instructions: Some(actual_instructions),
-                            ..
-                        },
-                    ..
-                }),
-            ..
-        } => assert_eq!(actual_instructions, developer_instructions),
-        other => panic!("expected Op::UserTurn with BTW developer instructions, got {other:?}"),
+            collaboration_mode, ..
+        } => assert_eq!(collaboration_mode, Some(expected_collaboration_mode)),
+        other => panic!("expected Op::UserTurn with the effective collab mode, got {other:?}"),
     }
 }
 
 #[tokio::test]
-async fn submit_user_message_with_developer_instructions_does_not_run_shell_commands() {
+async fn submit_user_message_as_model_turn_does_not_run_shell_commands() {
     let (mut chat, _rx, mut op_rx) = make_chatwidget_manual(Some("gpt-5")).await;
     chat.thread_id = Some(ThreadId::new());
 
-    chat.submit_user_message_with_developer_instructions(
-        "!echo hello".into(),
-        "<btw_context>Answer a side question.</btw_context>".to_string(),
-    );
+    chat.submit_user_message_as_model_turn("!echo hello".into());
 
     match next_submit_op(&mut op_rx) {
         Op::UserTurn { items, .. } => assert_eq!(

@@ -105,15 +105,27 @@ impl App {
             );
             return Ok(AppRunControl::Continue);
         };
+        let parent_turn_running = self.chat_widget.agent_turn_running();
 
-        match self
-            .server
-            .fork_thread(usize::MAX, self.config.clone(), path.clone(), false, None)
-            .await
-        {
+        let fork_result = if parent_turn_running {
+            self.server
+                .fork_thread_with_interrupted_marker(
+                    usize::MAX,
+                    self.config.clone(),
+                    path.clone(),
+                    false,
+                    None,
+                )
+                .await
+        } else {
+            self.server
+                .fork_thread(usize::MAX, self.config.clone(), path.clone(), false, None)
+                .await
+        };
+
+        match fork_result {
             Ok(forked) => {
                 let child_thread_id = forked.thread_id;
-                let parent_label = self.thread_label(parent_thread_id);
                 let pending_fork_banner_label = if self.chat_widget.thread_id()
                     == Some(parent_thread_id)
                 {
@@ -151,24 +163,9 @@ impl App {
                     return Err(err);
                 }
                 if self.active_thread_id == Some(child_thread_id) {
-                    // Use turn-local developer instructions rather than mutating forked history so
-                    // the side exchange stays isolated from the parent thread unless the user
-                    // explicitly shares it later.
-                    let developer_instructions = format!(
-                        "<btw_context>\n\
-You are a forked subagent answering a side question about the parent thread ({parent_label}).\n\
-The parent model will not automatically see this exchange unless the user explicitly shares it later.\n\
-Use the forked thread history as your source of truth.\n\
-If the parent thread appears to be missing some very recent in-flight progress, say that briefly instead of inventing it.\n\
-Answer the user's side question directly and concisely.\n\
-</btw_context>"
-                    );
                     if let Some(op) = self
                         .chat_widget
-                        .submit_user_message_with_developer_instructions(
-                            user_message,
-                            developer_instructions,
-                        )
+                        .submit_user_message_as_model_turn(user_message)
                     {
                         self.note_active_thread_outbound_op(&op).await;
                     }

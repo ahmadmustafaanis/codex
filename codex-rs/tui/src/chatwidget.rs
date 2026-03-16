@@ -4901,19 +4901,13 @@ impl ChatWidget {
         );
     }
 
-    pub(crate) fn submit_user_message_with_developer_instructions(
+    pub(crate) fn submit_user_message_as_model_turn(
         &mut self,
         user_message: UserMessage,
-        developer_instructions: String,
     ) -> Option<Op> {
-        let collaboration_mode = Some(self.effective_collaboration_mode().with_updates(
-            None,
-            None,
-            Some(Some(developer_instructions)),
-        ));
         self.submit_user_message_for_current_thread_with_collaboration_mode(
             user_message,
-            collaboration_mode,
+            None,
             false,
         )
     }
@@ -8819,6 +8813,10 @@ impl ChatWidget {
 
     pub(crate) fn composer_is_empty(&self) -> bool {
         self.bottom_pane.composer_is_empty()
+    }
+
+    pub(crate) fn agent_turn_running(&self) -> bool {
+        self.agent_turn_running
     }
 
     pub(crate) fn submit_user_message_with_mode(

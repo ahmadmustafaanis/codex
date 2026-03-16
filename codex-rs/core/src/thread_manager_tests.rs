@@ -1,9 +1,14 @@
 use super::*;
+use crate::EventPersistenceMode;
 use crate::codex::make_session_and_context;
 use crate::config::test_config;
 use crate::models_manager::collaboration_mode_presets::CollaborationModesConfig;
 use crate::models_manager::manager::RefreshStrategy;
+use crate::rollout::RolloutRecorder;
+use crate::rollout::RolloutRecorderParams;
+use crate::tasks::interrupted_turn_marker;
 use assert_matches::assert_matches;
+use codex_protocol::models::BaseInstructions;
 use codex_protocol::models::ContentItem;
 use codex_protocol::models::ReasoningItemReasoningSummary;
 use codex_protocol::models::ResponseItem;
@@ -184,4 +189,65 @@ async fn new_uses_configured_openai_provider_for_model_refresh() {
 
     let _ = manager.list_models(RefreshStrategy::Online).await;
     assert_eq!(models_mock.requests().len(), 1);
+}
+
+#[tokio::test]
+async fn fork_thread_with_interrupted_marker_appends_exact_interrupt_marker() {
+    let temp_dir = tempdir().expect("tempdir");
+    let mut config = test_config();
+    config.codex_home = temp_dir.path().join("codex-home");
+    config.cwd = config.codex_home.clone();
+    std::fs::create_dir_all(&config.codex_home).expect("create codex home");
+
+    let manager = ThreadManager::with_models_provider_and_home_for_tests(
+        CodexAuth::from_api_key("dummy"),
+        config.model_provider.clone(),
+        config.codex_home.clone(),
+    );
+    let recorder = RolloutRecorder::new(
+        &config,
+        RolloutRecorderParams::new(
+            ThreadId::new(),
+            None,
+            SessionSource::Exec,
+            BaseInstructions::default(),
+            Vec::new(),
+            EventPersistenceMode::Limited,
+        ),
+        None,
+        None,
+    )
+    .await
+    .expect("create rollout recorder");
+    recorder.persist().await.expect("persist rollout");
+    recorder
+        .record_items(&[RolloutItem::ResponseItem(user_msg("btw"))])
+        .await
+        .expect("record rollout items");
+    recorder.flush().await.expect("flush rollout");
+    let parent_rollout_path = recorder.rollout_path().to_path_buf();
+
+    let forked = manager
+        .fork_thread_with_interrupted_marker(usize::MAX, config, parent_rollout_path, false, None)
+        .await
+        .expect("fork thread with interrupted marker");
+    let child_rollout_path = forked
+        .session_configured
+        .rollout_path
+        .clone()
+        .expect("child rollout path");
+    let child_items = RolloutRecorder::get_rollout_history(&child_rollout_path)
+        .await
+        .expect("read child rollout")
+        .get_rollout_items();
+    let expected_marker =
+        serde_json::to_value(RolloutItem::ResponseItem(interrupted_turn_marker())).unwrap();
+
+    assert!(
+        child_items
+            .iter()
+            .map(serde_json::to_value)
+            .any(|item| item.unwrap() == expected_marker),
+        "expected child rollout to contain the exact interrupted-turn marker, got {child_items:?}"
+    );
 }
