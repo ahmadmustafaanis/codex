@@ -5573,7 +5573,7 @@ mod tests {
         let (mut app, mut app_event_rx, mut op_rx) = make_test_app_with_channels().await;
         let codex_home = tempdir()?;
         app.config.codex_home = codex_home.path().to_path_buf();
-        let guardian_approvals = guardian_approvals_mode();
+        let guardian_approvals = super::guardian_approvals_mode();
 
         app.update_feature_flags(vec![(Feature::GuardianApproval, true)])
             .await;
@@ -5657,7 +5657,7 @@ mod tests {
         let (mut app, mut app_event_rx, mut op_rx) = make_test_app_with_channels().await;
         let codex_home = tempdir()?;
         app.config.codex_home = codex_home.path().to_path_buf();
-        let smart_approvals = smart_approvals_mode();
+        let smart_approvals = super::smart_approvals_mode();
 
         app.update_feature_flags(vec![(Feature::GuardianApproval, true)])
             .await;
@@ -5832,7 +5832,7 @@ mod tests {
         let (mut app, _app_event_rx, mut op_rx) = make_test_app_with_channels().await;
         let codex_home = tempdir()?;
         app.config.codex_home = codex_home.path().to_path_buf();
-        let guardian_approvals = guardian_approvals_mode();
+        let guardian_approvals = super::guardian_approvals_mode();
         let config_toml_path = AbsolutePathBuf::try_from(codex_home.path().join("config.toml"))?;
         let config_toml = "approvals_reviewer = \"user\"\n";
         std::fs::write(config_toml_path.as_path(), config_toml)?;
@@ -5959,7 +5959,7 @@ mod tests {
         let (mut app, _app_event_rx, mut op_rx) = make_test_app_with_channels().await;
         let codex_home = tempdir()?;
         app.config.codex_home = codex_home.path().to_path_buf();
-        let guardian_approvals = guardian_approvals_mode();
+        let guardian_approvals = super::guardian_approvals_mode();
         app.active_profile = Some("guardian".to_string());
         let config_toml_path = AbsolutePathBuf::try_from(codex_home.path().join("config.toml"))?;
         let config_toml = "profile = \"guardian\"\napprovals_reviewer = \"user\"\n";
