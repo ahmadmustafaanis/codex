@@ -146,7 +146,10 @@ impl App {
                         pending_fork_banner_label,
                     },
                 );
-                self.select_agent_thread(tui, child_thread_id).await?;
+                if let Err(err) = self.select_agent_thread(tui, child_thread_id).await {
+                    self.discard_btw_thread(child_thread_id).await;
+                    return Err(err);
+                }
                 if self.active_thread_id == Some(child_thread_id) {
                     // Use turn-local developer instructions rather than mutating forked history so
                     // the side exchange stays isolated from the parent thread unless the user
@@ -170,7 +173,7 @@ Answer the user's side question directly and concisely.\n\
                         self.note_active_thread_outbound_op(&op).await;
                     }
                 } else {
-                    self.btw_threads.remove(&child_thread_id);
+                    self.discard_btw_thread(child_thread_id).await;
                     self.chat_widget.add_error_message(format!(
                         "Failed to switch into BTW thread {child_thread_id}."
                     ));
