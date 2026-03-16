@@ -5607,11 +5607,11 @@ mod tests {
                 .permissions
                 .sandbox_policy
                 .get(),
-            &smart_approvals.sandbox_policy
+            &guardian_approvals.sandbox_policy
         );
         assert_eq!(
             app.chat_widget.config_ref().approvals_reviewer,
-            smart_approvals.approvals_reviewer
+            guardian_approvals.approvals_reviewer
         );
         assert_eq!(app.runtime_approval_policy_override, None);
         assert_eq!(app.runtime_sandbox_policy_override, None);
@@ -5619,9 +5619,9 @@ mod tests {
             op_rx.try_recv(),
             Ok(Op::OverrideTurnContext {
                 cwd: None,
-                approval_policy: Some(smart_approvals.approval_policy),
-                approvals_reviewer: Some(smart_approvals.approvals_reviewer),
-                sandbox_policy: Some(smart_approvals.sandbox_policy.clone()),
+                approval_policy: Some(guardian_approvals.approval_policy),
+                approvals_reviewer: Some(guardian_approvals.approvals_reviewer),
+                sandbox_policy: Some(guardian_approvals.sandbox_policy.clone()),
                 windows_sandbox_level: None,
                 model: None,
                 effort: None,
@@ -5642,10 +5642,10 @@ mod tests {
             .map(|line| line.to_string())
             .collect::<Vec<_>>()
             .join("\n");
-        assert!(rendered.contains("Permissions updated to Smart Approvals"));
+        assert!(rendered.contains("Permissions updated to Guardian Approvals"));
 
         let config = std::fs::read_to_string(codex_home.path().join("config.toml"))?;
-        assert!(config.contains("smart_approvals = true"));
+        assert!(config.contains("guardian_approval = true"));
         assert!(config.contains("approvals_reviewer = \"guardian_subagent\""));
         assert!(config.contains("approval_policy = \"on-request\""));
         assert!(config.contains("sandbox_mode = \"workspace-write\""));
@@ -5657,7 +5657,7 @@ mod tests {
         let (mut app, mut app_event_rx, mut op_rx) = make_test_app_with_channels().await;
         let codex_home = tempdir()?;
         app.config.codex_home = codex_home.path().to_path_buf();
-        let smart_approvals = super::smart_approvals_mode();
+        let guardian_approvals = super::guardian_approvals_mode();
 
         app.update_feature_flags(vec![(Feature::GuardianApproval, true)])
             .await;
@@ -5671,11 +5671,11 @@ mod tests {
         );
         assert_eq!(
             app.config.approvals_reviewer,
-            smart_approvals.approvals_reviewer
+            guardian_approvals.approvals_reviewer
         );
         assert_eq!(
             app.config.permissions.approval_policy.value(),
-            smart_approvals.approval_policy
+            guardian_approvals.approval_policy
         );
         assert_eq!(
             app.chat_widget
@@ -5683,7 +5683,7 @@ mod tests {
                 .permissions
                 .approval_policy
                 .value(),
-            smart_approvals.approval_policy
+            guardian_approvals.approval_policy
         );
         assert_eq!(
             app.chat_widget
