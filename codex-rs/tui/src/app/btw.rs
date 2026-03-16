@@ -166,14 +166,19 @@ impl App {
         self.refresh_in_memory_config_from_disk_best_effort("starting a BTW subagent")
             .await;
         let parent_rollout_path = match self.server.get_thread(parent_thread_id).await {
-            Ok(thread) => thread.rollout_path().filter(|path| path.exists()),
+            Ok(thread) => thread.rollout_path(),
             Err(err) => {
-                self.chat_widget.add_error_message(format!(
-                    "Failed to fork BTW thread from {parent_thread_id}: {err}"
-                ));
-                return Ok(AppRunControl::Continue);
+                if self.current_displayed_thread_id() == Some(parent_thread_id) {
+                    self.chat_widget.rollout_path()
+                } else {
+                    self.chat_widget.add_error_message(format!(
+                        "Failed to fork BTW thread from {parent_thread_id}: {err}"
+                    ));
+                    return Ok(AppRunControl::Continue);
+                }
             }
-        };
+        }
+        .filter(|path| path.exists());
         let Some(parent_rollout_path) = parent_rollout_path else {
             self.chat_widget.add_error_message(
                 "A thread must contain at least one turn before /btw can fork it.".to_string(),

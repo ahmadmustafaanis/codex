@@ -114,6 +114,35 @@ async fn start_btw_ctrl_c_returns_to_parent() -> Result<()> {
 }
 
 #[tokio::test]
+async fn start_btw_uses_displayed_rollout_path_for_replay_only_parent() -> Result<()> {
+    let (mut app, _app_event_rx, _op_rx) = make_test_app_with_channels().await;
+    let mut tui = make_test_tui();
+
+    let parent_thread_id =
+        setup_btw_parent_thread(&mut app, Some("what have you explored so far?")).await?;
+    let sibling = app.server.start_thread(app.config.clone()).await?;
+    let sibling_thread_id = sibling.thread_id;
+    app.handle_thread_created(sibling_thread_id).await?;
+    app.select_agent_thread(&mut tui, sibling_thread_id).await?;
+
+    app.server.remove_thread(&parent_thread_id).await;
+    app.select_agent_thread(&mut tui, parent_thread_id).await?;
+
+    let parent_rollout_path = app
+        .chat_widget
+        .rollout_path()
+        .expect("displayed parent rollout path");
+    assert!(app.server.get_thread(parent_thread_id).await.is_err());
+    assert!(parent_rollout_path.exists());
+
+    let child_thread_id = start_btw_thread(&mut app, &mut tui, parent_thread_id).await?;
+
+    assert_ne!(child_thread_id, parent_thread_id);
+    assert_eq!(app.active_btw_parent_thread_id(), Some(parent_thread_id));
+    Ok(())
+}
+
+#[tokio::test]
 async fn idle_main_thread_ctrl_c_requests_shutdown_exit() -> Result<()> {
     let (mut app, mut app_event_rx, _op_rx) = make_test_app_with_channels().await;
     let mut tui = make_test_tui();
