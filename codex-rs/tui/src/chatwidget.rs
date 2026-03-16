@@ -4894,8 +4894,11 @@ impl ChatWidget {
     }
 
     fn submit_user_message(&mut self, user_message: UserMessage) {
-        let _ =
-            self.submit_user_message_for_current_thread_with_collaboration_mode(user_message, None);
+        let _ = self.submit_user_message_for_current_thread_with_collaboration_mode(
+            user_message,
+            None,
+            true,
+        );
     }
 
     pub(crate) fn submit_user_message_with_developer_instructions(
@@ -4911,6 +4914,7 @@ impl ChatWidget {
         self.submit_user_message_for_current_thread_with_collaboration_mode(
             user_message,
             collaboration_mode,
+            false,
         )
     }
 
@@ -4918,6 +4922,7 @@ impl ChatWidget {
         &mut self,
         user_message: UserMessage,
         collaboration_mode_override: Option<CollaborationMode>,
+        allow_shell_command_execution: bool,
     ) -> Option<Op> {
         if !self.is_session_configured() {
             tracing::warn!("cannot submit user message before session is configured; queueing");
@@ -4958,7 +4963,7 @@ impl ChatWidget {
         let mut items: Vec<UserInput> = Vec::new();
 
         // Special-case: "!cmd" executes a local shell command instead of sending to the model.
-        if let Some(stripped) = text.strip_prefix('!') {
+        if allow_shell_command_execution && let Some(stripped) = text.strip_prefix('!') {
             let cmd = stripped.trim();
             if cmd.is_empty() {
                 self.app_event_tx.send(AppEvent::InsertHistoryCell(Box::new(

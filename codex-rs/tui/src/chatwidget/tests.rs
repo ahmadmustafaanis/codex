@@ -2518,6 +2518,28 @@ async fn submit_user_message_with_developer_instructions_overrides_turn_mode() {
 }
 
 #[tokio::test]
+async fn submit_user_message_with_developer_instructions_does_not_run_shell_commands() {
+    let (mut chat, _rx, mut op_rx) = make_chatwidget_manual(Some("gpt-5")).await;
+    chat.thread_id = Some(ThreadId::new());
+
+    chat.submit_user_message_with_developer_instructions(
+        "!echo hello".into(),
+        "<btw_context>Answer a side question.</btw_context>".to_string(),
+    );
+
+    match next_submit_op(&mut op_rx) {
+        Op::UserTurn { items, .. } => assert_eq!(
+            items,
+            vec![UserInput::Text {
+                text: "!echo hello".to_string(),
+                text_elements: Vec::new(),
+            }]
+        ),
+        other => panic!("expected Op::UserTurn for BTW shell-like input, got {other:?}"),
+    }
+}
+
+#[tokio::test]
 async fn reasoning_selection_in_plan_mode_opens_scope_prompt_event() {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(Some("gpt-5.1-codex-max")).await;
     chat.thread_id = Some(ThreadId::new());
