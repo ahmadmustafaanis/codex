@@ -6,6 +6,7 @@ use crossterm::event::KeyCode;
 use crossterm::event::KeyEvent;
 use crossterm::event::KeyModifiers;
 use pretty_assertions::assert_eq;
+use std::path::PathBuf;
 
 #[tokio::test]
 async fn start_btw_forks_switches_and_esc_returns_to_parent() -> Result<()> {
@@ -260,6 +261,55 @@ async fn switching_away_from_nested_btw_discards_full_hidden_chain() -> Result<(
     );
     assert!(app.server.get_thread(child_thread_id).await.is_err());
     assert!(app.server.get_thread(grandchild_thread_id).await.is_err());
+    Ok(())
+}
+
+#[tokio::test]
+async fn switching_away_from_nested_btw_clears_hidden_pending_approvals() -> Result<()> {
+    let (mut app, _app_event_rx, _op_rx) = make_test_app_with_channels().await;
+    let mut tui = make_test_tui();
+
+    let parent_thread_id = setup_btw_parent_thread(&mut app, None).await?;
+    let child_thread_id = start_btw_thread(&mut app, &mut tui, parent_thread_id).await?;
+    let _grandchild_thread_id = start_btw_thread(&mut app, &mut tui, child_thread_id).await?;
+
+    {
+        let child_channel = app
+            .thread_event_channels
+            .get(&child_thread_id)
+            .expect("child thread channel");
+        let mut store = child_channel.store.lock().await;
+        store.push_event(Event {
+            id: "ev-approval".to_string(),
+            msg: EventMsg::ExecApprovalRequest(
+                codex_protocol::protocol::ExecApprovalRequestEvent {
+                    call_id: "call-approval".to_string(),
+                    approval_id: None,
+                    turn_id: "turn-approval".to_string(),
+                    command: vec!["echo".to_string(), "hi".to_string()],
+                    cwd: PathBuf::from("/tmp"),
+                    reason: None,
+                    network_approval_context: None,
+                    proposed_execpolicy_amendment: None,
+                    proposed_network_policy_amendments: None,
+                    additional_permissions: None,
+                    skill_metadata: None,
+                    available_decisions: None,
+                    parsed_cmd: Vec::new(),
+                },
+            ),
+        });
+    }
+
+    app.refresh_pending_thread_approvals().await;
+    assert_eq!(
+        app.chat_widget.pending_thread_approvals(),
+        &[app.thread_label(child_thread_id)]
+    );
+
+    app.select_agent_thread(&mut tui, parent_thread_id).await?;
+
+    assert!(app.chat_widget.pending_thread_approvals().is_empty());
     Ok(())
 }
 

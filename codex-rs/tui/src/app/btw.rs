@@ -132,6 +132,8 @@ impl App {
         self.btw_threads.remove(&thread_id);
         if self.active_thread_id == Some(thread_id) {
             self.clear_active_thread().await;
+        } else {
+            self.refresh_pending_thread_approvals().await;
         }
         self.sync_active_agent_label();
     }
