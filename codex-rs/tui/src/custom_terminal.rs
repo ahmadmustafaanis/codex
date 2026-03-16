@@ -202,7 +202,7 @@ where
     }
 
     #[cfg(test)]
-    pub fn with_test_options(backend: B, screen_size: Size, cursor_pos: Position) -> Self {
+    pub(crate) fn with_test_options(backend: B, screen_size: Size, cursor_pos: Position) -> Self {
         Self {
             backend,
             buffers: [Buffer::empty(Rect::ZERO), Buffer::empty(Rect::ZERO)],

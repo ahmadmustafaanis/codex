@@ -312,7 +312,6 @@ const DEFAULT_OPENAI_BASE_URL: &str = "https://api.openai.com/v1";
 const FAST_STATUS_MODEL: &str = "gpt-5.4";
 const DEFAULT_STATUS_LINE_ITEMS: [&str; 3] =
     ["model-with-reasoning", "context-remaining", "current-dir"];
-const BTW_RENAME_DISABLED_MESSAGE: &str = "BTW threads are ephemeral and cannot be renamed.";
 // Track information about an in-flight exec command.
 struct RunningCommand {
     command: Vec<String>,
@@ -474,8 +473,6 @@ pub(crate) struct ChatWidgetInit {
     pub(crate) frame_requester: FrameRequester,
     pub(crate) app_event_tx: AppEventSender,
     pub(crate) initial_user_message: Option<UserMessage>,
-    /// One-shot pretty label for the next synthetic fork banner; consumed on first use.
-    pub(crate) pending_fork_banner_label: Option<String>,
     pub(crate) enhanced_keys_supported: bool,
     pub(crate) auth_manager: Arc<AuthManager>,
     pub(crate) models_manager: Arc<ModelsManager>,
@@ -511,6 +508,12 @@ enum RateLimitErrorKind {
     ServerOverloaded,
     UsageLimit,
     Generic,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ShellEscapePolicy {
+    Allow,
+    Disallow,
 }
 
 fn rate_limit_error_kind(info: &CodexErrorInfo) -> Option<RateLimitErrorKind> {
@@ -718,10 +721,10 @@ pub(crate) struct ChatWidget {
     suppress_queue_autosend: bool,
     thread_id: Option<ThreadId>,
     thread_name: Option<String>,
-    thread_rename_enabled: bool,
+    thread_rename_block_message: Option<String>,
     forked_from: Option<ThreadId>,
     /// Pretty parent label used only for the next fork banner inserted on session configure.
-    pending_fork_banner_label: Option<String>,
+    next_fork_banner_parent_label: Option<String>,
     frame_requester: FrameRequester,
     // Whether to include the initial welcome banner on session configured
     show_welcome_banner: bool,
@@ -1447,7 +1450,7 @@ impl ChatWidget {
     }
 
     fn emit_forked_thread_event(&mut self, forked_from_id: ThreadId) {
-        let line: Line<'static> = if let Some(label) = self.pending_fork_banner_label.take() {
+        let line: Line<'static> = if let Some(label) = self.next_fork_banner_parent_label.take() {
             vec![
                 "• ".dim(),
                 "Thread forked from ".into(),
@@ -3501,7 +3504,6 @@ impl ChatWidget {
             frame_requester,
             app_event_tx,
             initial_user_message,
-            pending_fork_banner_label,
             enhanced_keys_supported,
             auth_manager,
             models_manager,
@@ -3607,9 +3609,9 @@ impl ChatWidget {
             suppress_queue_autosend: false,
             thread_id: None,
             thread_name: None,
-            thread_rename_enabled: true,
+            thread_rename_block_message: None,
             forked_from: None,
-            pending_fork_banner_label,
+            next_fork_banner_parent_label: None,
             queued_user_messages: VecDeque::new(),
             pending_steers: VecDeque::new(),
             submit_pending_steers_after_interrupt: false,
@@ -3693,7 +3695,6 @@ impl ChatWidget {
             frame_requester,
             app_event_tx,
             initial_user_message,
-            pending_fork_banner_label,
             enhanced_keys_supported,
             auth_manager,
             models_manager,
@@ -3798,9 +3799,9 @@ impl ChatWidget {
             suppress_queue_autosend: false,
             thread_id: None,
             thread_name: None,
-            thread_rename_enabled: true,
+            thread_rename_block_message: None,
             forked_from: None,
-            pending_fork_banner_label,
+            next_fork_banner_parent_label: None,
             saw_plan_update_this_turn: false,
             saw_plan_item_this_turn: false,
             plan_delta_buffer: String::new(),
@@ -3876,7 +3877,6 @@ impl ChatWidget {
             frame_requester,
             app_event_tx,
             initial_user_message,
-            pending_fork_banner_label,
             enhanced_keys_supported,
             auth_manager,
             models_manager,
@@ -3981,9 +3981,9 @@ impl ChatWidget {
             suppress_queue_autosend: false,
             thread_id: None,
             thread_name: None,
-            thread_rename_enabled: true,
+            thread_rename_block_message: None,
             forked_from: None,
-            pending_fork_banner_label,
+            next_fork_banner_parent_label: None,
             queued_user_messages: VecDeque::new(),
             pending_steers: VecDeque::new(),
             submit_pending_steers_after_interrupt: false,
@@ -4267,8 +4267,16 @@ impl ChatWidget {
         self.bottom_pane.set_footer_hint_override(items);
     }
 
-    pub(crate) fn set_thread_rename_enabled(&mut self, enabled: bool) {
-        self.thread_rename_enabled = enabled;
+    pub(crate) fn clear_thread_rename_block(&mut self) {
+        self.thread_rename_block_message = None;
+    }
+
+    pub(crate) fn set_thread_rename_block_message(&mut self, message: impl Into<String>) {
+        self.thread_rename_block_message = Some(message.into());
+    }
+
+    pub(crate) fn set_next_fork_banner_parent_label(&mut self, label: Option<String>) {
+        self.next_fork_banner_parent_label = label;
     }
 
     pub(crate) fn show_selection_view(&mut self, params: SelectionViewParams) {
@@ -4683,7 +4691,7 @@ impl ChatWidget {
                 }
             }
             SlashCommand::Rename if !trimmed.is_empty() => {
-                if !self.ensure_thread_rename_enabled() {
+                if !self.ensure_thread_rename_allowed() {
                     return;
                 }
                 self.session_telemetry
@@ -4772,7 +4780,7 @@ impl ChatWidget {
     }
 
     fn show_rename_prompt(&mut self) {
-        if !self.ensure_thread_rename_enabled() {
+        if !self.ensure_thread_rename_allowed() {
             return;
         }
         let tx = self.app_event_tx.clone();
@@ -4806,12 +4814,13 @@ impl ChatWidget {
         self.bottom_pane.show_view(Box::new(view));
     }
 
-    fn ensure_thread_rename_enabled(&mut self) -> bool {
-        if self.thread_rename_enabled {
-            true
-        } else {
-            self.add_error_message(BTW_RENAME_DISABLED_MESSAGE.to_string());
-            false
+    fn ensure_thread_rename_allowed(&mut self) -> bool {
+        match self.thread_rename_block_message.clone() {
+            Some(message) => {
+                self.add_error_message(message);
+                false
+            }
+            None => true,
         }
     }
 
@@ -4894,29 +4903,21 @@ impl ChatWidget {
     }
 
     fn submit_user_message(&mut self, user_message: UserMessage) {
-        let _ = self.submit_user_message_for_current_thread_with_collaboration_mode(
-            user_message,
-            None,
-            true,
-        );
+        let _ = self
+            .submit_user_message_with_shell_escape_policy(user_message, ShellEscapePolicy::Allow);
     }
 
-    pub(crate) fn submit_user_message_as_model_turn(
+    pub(crate) fn submit_user_message_as_plain_user_turn(
         &mut self,
         user_message: UserMessage,
     ) -> Option<Op> {
-        self.submit_user_message_for_current_thread_with_collaboration_mode(
-            user_message,
-            None,
-            false,
-        )
+        self.submit_user_message_with_shell_escape_policy(user_message, ShellEscapePolicy::Disallow)
     }
 
-    fn submit_user_message_for_current_thread_with_collaboration_mode(
+    fn submit_user_message_with_shell_escape_policy(
         &mut self,
         user_message: UserMessage,
-        collaboration_mode_override: Option<CollaborationMode>,
-        allow_shell_command_execution: bool,
+        shell_escape_policy: ShellEscapePolicy,
     ) -> Option<Op> {
         if !self.is_session_configured() {
             tracing::warn!("cannot submit user message before session is configured; queueing");
@@ -4957,7 +4958,9 @@ impl ChatWidget {
         let mut items: Vec<UserInput> = Vec::new();
 
         // Special-case: "!cmd" executes a local shell command instead of sending to the model.
-        if allow_shell_command_execution && let Some(stripped) = text.strip_prefix('!') {
+        if shell_escape_policy == ShellEscapePolicy::Allow
+            && let Some(stripped) = text.strip_prefix('!')
+        {
             let cmd = stripped.trim();
             if cmd.is_empty() {
                 self.app_event_tx.send(AppEvent::InsertHistoryCell(Box::new(
@@ -5100,15 +5103,13 @@ impl ChatWidget {
         }
 
         let effective_mode = self.effective_collaboration_mode();
-        let collaboration_mode = collaboration_mode_override.or_else(|| {
-            if self.collaboration_modes_enabled() {
-                self.active_collaboration_mask
-                    .as_ref()
-                    .map(|_| effective_mode.clone())
-            } else {
-                None
-            }
-        });
+        let collaboration_mode = if self.collaboration_modes_enabled() {
+            self.active_collaboration_mask
+                .as_ref()
+                .map(|_| effective_mode.clone())
+        } else {
+            None
+        };
         let pending_steer = (!render_in_history).then(|| PendingSteer {
             user_message: UserMessage {
                 text: text.clone(),

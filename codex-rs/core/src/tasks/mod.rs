@@ -22,6 +22,7 @@ use tracing::warn;
 use crate::AuthManager;
 use crate::codex::Session;
 use crate::codex::TurnContext;
+use crate::contextual_user_message::TURN_ABORTED_CLOSE_TAG;
 use crate::contextual_user_message::TURN_ABORTED_OPEN_TAG;
 use crate::event_mapping::parse_turn_item;
 use crate::models_manager::manager::ModelsManager;
@@ -62,13 +63,13 @@ const TURN_ABORTED_INTERRUPTED_GUIDANCE: &str = "The user interrupted the previo
 ///
 /// Keep this in sync with the real interrupt path so forked BTW threads can inherit the same
 /// in-distribution marker instead of approximating it with ad hoc instructions.
-pub(crate) fn interrupted_turn_marker() -> ResponseItem {
+pub(crate) fn interrupted_turn_history_marker() -> ResponseItem {
     ResponseItem::Message {
         id: None,
         role: "user".to_string(),
         content: vec![ContentItem::InputText {
             text: format!(
-                "{TURN_ABORTED_OPEN_TAG}\n{TURN_ABORTED_INTERRUPTED_GUIDANCE}\n</turn_aborted>"
+                "{TURN_ABORTED_OPEN_TAG}\n{TURN_ABORTED_INTERRUPTED_GUIDANCE}\n{TURN_ABORTED_CLOSE_TAG}"
             ),
         }],
         end_turn: None,
@@ -454,7 +455,7 @@ impl Session {
         if reason == TurnAbortReason::Interrupted {
             self.cleanup_after_interrupt(&task.turn_context).await;
 
-            let marker = interrupted_turn_marker();
+            let marker = interrupted_turn_history_marker();
             self.record_into_history(std::slice::from_ref(&marker), task.turn_context.as_ref())
                 .await;
             self.persist_rollout_items(&[RolloutItem::ResponseItem(marker)])

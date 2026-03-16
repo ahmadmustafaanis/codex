@@ -16,7 +16,7 @@ async fn start_btw_forks_switches_and_esc_returns_to_parent() -> Result<()> {
         setup_btw_parent_thread(&mut app, Some("what have you explored so far?")).await?;
     let child_thread_id = start_btw_thread(&mut app, &mut tui, parent_thread_id).await?;
     assert_ne!(child_thread_id, parent_thread_id);
-    assert_eq!(app.active_btw_return_thread(), Some(parent_thread_id));
+    assert_eq!(app.active_btw_parent_thread_id(), Some(parent_thread_id));
     assert_eq!(app.agent_navigation.get(&child_thread_id), None);
     let child_channel = app
         .thread_event_channels
@@ -87,7 +87,7 @@ async fn start_btw_forks_switches_and_esc_returns_to_parent() -> Result<()> {
     app.handle_key_event(&mut tui, KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE))
         .await;
     assert_eq!(app.active_thread_id, Some(parent_thread_id));
-    assert_eq!(app.active_btw_return_thread(), None);
+    assert_eq!(app.active_btw_parent_thread_id(), None);
     assert!(!app.thread_event_channels.contains_key(&child_thread_id));
     Ok(())
 }
@@ -108,7 +108,7 @@ async fn start_btw_ctrl_c_returns_to_parent() -> Result<()> {
     .await;
 
     assert_eq!(app.active_thread_id, Some(parent_thread_id));
-    assert_eq!(app.active_btw_return_thread(), None);
+    assert_eq!(app.active_btw_parent_thread_id(), None);
     assert!(!app.thread_event_channels.contains_key(&child_thread_id));
     Ok(())
 }
@@ -135,7 +135,7 @@ async fn idle_main_thread_ctrl_c_requests_shutdown_exit() -> Result<()> {
         }
     }
     assert_eq!(app.active_thread_id, Some(parent_thread_id));
-    assert_eq!(app.active_btw_return_thread(), None);
+    assert_eq!(app.active_btw_parent_thread_id(), None);
     assert_eq!(exit_mode, Some(ExitMode::ShutdownFirst));
     Ok(())
 }
@@ -156,7 +156,7 @@ async fn ctrl_c_after_returning_from_btw_requests_shutdown_exit() -> Result<()> 
     .await;
 
     assert_eq!(app.active_thread_id, Some(parent_thread_id));
-    assert_eq!(app.active_btw_return_thread(), None);
+    assert_eq!(app.active_btw_parent_thread_id(), None);
     assert!(!app.thread_event_channels.contains_key(&child_thread_id));
     while app_event_rx.try_recv().is_ok() {}
 
@@ -190,7 +190,7 @@ async fn nested_btw_preserves_parent_chain_and_esc_returns_one_level() -> Result
     assert_eq!(
         app.btw_threads
             .get(&grandchild_thread_id)
-            .map(|state| state.return_thread_id),
+            .map(|state| state.parent_thread_id),
         Some(child_thread_id)
     );
     assert!(app.thread_event_channels.contains_key(&child_thread_id));
@@ -202,7 +202,7 @@ async fn nested_btw_preserves_parent_chain_and_esc_returns_one_level() -> Result
     app.handle_key_event(&mut tui, KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE))
         .await;
     assert_eq!(app.active_thread_id, Some(child_thread_id));
-    assert_eq!(app.active_btw_return_thread(), Some(parent_thread_id));
+    assert_eq!(app.active_btw_parent_thread_id(), Some(parent_thread_id));
     assert!(app.thread_event_channels.contains_key(&child_thread_id));
     assert!(
         !app.thread_event_channels
@@ -223,7 +223,7 @@ async fn switching_away_from_nested_btw_discards_full_hidden_chain() -> Result<(
     app.select_agent_thread(&mut tui, parent_thread_id).await?;
 
     assert_eq!(app.active_thread_id, Some(parent_thread_id));
-    assert_eq!(app.active_btw_return_thread(), None);
+    assert_eq!(app.active_btw_parent_thread_id(), None);
     assert!(!app.thread_event_channels.contains_key(&child_thread_id));
     assert!(
         !app.thread_event_channels
@@ -247,7 +247,7 @@ async fn open_agent_picker_keeps_active_btw_thread_until_selection() -> Result<(
         .await?;
     assert!(matches!(control, AppRunControl::Continue));
     assert_eq!(app.active_thread_id, Some(child_thread_id));
-    assert_eq!(app.active_btw_return_thread(), Some(parent_thread_id));
+    assert_eq!(app.active_btw_parent_thread_id(), Some(parent_thread_id));
     assert!(app.thread_event_channels.contains_key(&child_thread_id));
     assert_eq!(app.agent_navigation.get(&child_thread_id), None);
 
@@ -256,7 +256,7 @@ async fn open_agent_picker_keeps_active_btw_thread_until_selection() -> Result<(
         .await?;
     assert!(matches!(control, AppRunControl::Continue));
     assert_eq!(app.active_thread_id, Some(parent_thread_id));
-    assert_eq!(app.active_btw_return_thread(), None);
+    assert_eq!(app.active_btw_parent_thread_id(), None);
     assert!(!app.thread_event_channels.contains_key(&child_thread_id));
     Ok(())
 }
@@ -273,7 +273,7 @@ async fn failed_switch_from_btw_keeps_current_thread_and_parent_chain() -> Resul
     app.select_agent_thread(&mut tui, missing_thread_id).await?;
 
     assert_eq!(app.active_thread_id, Some(child_thread_id));
-    assert_eq!(app.active_btw_return_thread(), Some(parent_thread_id));
+    assert_eq!(app.active_btw_parent_thread_id(), Some(parent_thread_id));
     assert!(app.thread_event_channels.contains_key(&child_thread_id));
     Ok(())
 }
@@ -301,40 +301,11 @@ async fn fork_current_session_discards_active_btw_chain() -> Result<()> {
         .await?;
     assert!(matches!(control, AppRunControl::Continue));
 
-    assert_eq!(app.active_btw_return_thread(), None);
+    assert_eq!(app.active_btw_parent_thread_id(), None);
     assert!(app.btw_threads.is_empty());
     assert!(app.server.get_thread(parent_thread_id).await.is_err());
     assert!(app.server.get_thread(child_thread_id).await.is_err());
     Ok(())
-}
-
-fn btw_parent_rollout_line(
-    app: &App,
-    thread_id: ThreadId,
-) -> codex_protocol::protocol::RolloutLine {
-    codex_protocol::protocol::RolloutLine {
-        timestamp: "2026-03-12T00:00:00.000Z".to_string(),
-        item: codex_protocol::protocol::RolloutItem::SessionMeta(
-            codex_protocol::protocol::SessionMetaLine {
-                meta: codex_protocol::protocol::SessionMeta {
-                    id: thread_id,
-                    forked_from_id: None,
-                    timestamp: "2026-03-12T00:00:00.000Z".to_string(),
-                    cwd: app.config.cwd.clone(),
-                    originator: "test".to_string(),
-                    cli_version: env!("CARGO_PKG_VERSION").to_string(),
-                    source: SessionSource::Cli,
-                    agent_nickname: None,
-                    agent_role: None,
-                    model_provider: Some(app.config.model_provider_id.clone()),
-                    base_instructions: None,
-                    dynamic_tools: None,
-                    memory_mode: None,
-                },
-                git: None,
-            },
-        ),
-    }
 }
 
 async fn setup_btw_parent_thread(app: &mut App, parent_message: Option<&str>) -> Result<ThreadId> {
@@ -349,10 +320,31 @@ async fn setup_btw_parent_thread(app: &mut App, parent_message: Option<&str>) ->
         std::fs::create_dir_all(parent_dir)?;
     }
 
-    let mut rollout_lines = vec![serde_json::to_string(&btw_parent_rollout_line(
-        app,
-        parent_thread_id,
-    ))?];
+    let mut rollout_lines = vec![serde_json::to_string(
+        &codex_protocol::protocol::RolloutLine {
+            timestamp: "2026-03-12T00:00:00.000Z".to_string(),
+            item: codex_protocol::protocol::RolloutItem::SessionMeta(
+                codex_protocol::protocol::SessionMetaLine {
+                    meta: codex_protocol::protocol::SessionMeta {
+                        id: parent_thread_id,
+                        forked_from_id: None,
+                        timestamp: "2026-03-12T00:00:00.000Z".to_string(),
+                        cwd: app.config.cwd.clone(),
+                        originator: "test".to_string(),
+                        cli_version: env!("CARGO_PKG_VERSION").to_string(),
+                        source: SessionSource::Cli,
+                        agent_nickname: None,
+                        agent_role: None,
+                        model_provider: Some(app.config.model_provider_id.clone()),
+                        base_instructions: None,
+                        dynamic_tools: None,
+                        memory_mode: None,
+                    },
+                    git: None,
+                },
+            ),
+        },
+    )?];
     if let Some(parent_message) = parent_message {
         rollout_lines.push(serde_json::to_string(
             &codex_protocol::protocol::RolloutLine {

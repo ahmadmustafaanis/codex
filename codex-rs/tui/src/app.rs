@@ -123,6 +123,12 @@ use self::btw::BtwThreadState;
 use self::pending_interactive_replay::PendingInteractiveReplayState;
 
 const EXTERNAL_EDITOR_HINT: &str = "Save and close external editor to continue.";
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum AgentPickerVisibility {
+    Hidden,
+    ShowInAgentPicker,
+}
 const THREAD_EVENT_CHANNEL_CAPACITY: usize = 32768;
 
 enum ThreadInteractiveRequest {
@@ -769,7 +775,6 @@ impl App {
             app_event_tx: self.app_event_tx.clone(),
             // Fork/resume bootstraps here don't carry any prefilled message content.
             initial_user_message: None,
-            pending_fork_banner_label: None,
             enhanced_keys_supported: self.enhanced_keys_supported,
             auth_manager: self.auth_manager.clone(),
             models_manager: self.server.get_models_manager(),
@@ -1220,34 +1225,39 @@ impl App {
 
     async fn shutdown_current_thread(&mut self) {
         if let Some(thread_id) = self.chat_widget.thread_id() {
-            // Clear any in-flight rollback guard when switching threads.
-            self.backtrack.pending_rollback = None;
-            self.suppress_shutdown_complete_thread_id = Some(thread_id);
-            self.chat_widget.submit_op(Op::Shutdown);
-            self.server.remove_thread(&thread_id).await;
-            self.abort_thread_event_listener(thread_id);
+            self.shutdown_and_remove_thread(thread_id).await;
         }
     }
 
-    async fn shutdown_loaded_threads_except(&mut self, excluded_thread_id: ThreadId) {
+    async fn shutdown_attached_threads_except(&mut self, excluded_thread_id: ThreadId) {
         let thread_ids: Vec<ThreadId> = self
             .thread_event_channels
             .keys()
             .copied()
             .filter(|thread_id| *thread_id != excluded_thread_id)
             .collect();
-        let current_thread_id = self.chat_widget.thread_id();
         for thread_id in thread_ids {
-            if Some(thread_id) == current_thread_id {
-                self.backtrack.pending_rollback = None;
-                self.suppress_shutdown_complete_thread_id = Some(thread_id);
-                self.chat_widget.submit_op(Op::Shutdown);
-            } else if let Ok(thread) = self.server.get_thread(thread_id).await {
-                let _ = thread.submit(Op::Shutdown).await;
-            }
-            self.server.remove_thread(&thread_id).await;
-            self.abort_thread_event_listener(thread_id);
+            self.shutdown_and_remove_thread(thread_id).await;
         }
+    }
+
+    async fn request_thread_shutdown(&mut self, thread_id: ThreadId) {
+        if self.chat_widget.thread_id() == Some(thread_id) {
+            // Clear any in-flight rollback guard when switching threads.
+            self.backtrack.pending_rollback = None;
+            self.suppress_shutdown_complete_thread_id = Some(thread_id);
+            self.chat_widget.submit_op(Op::Shutdown);
+        } else if let Ok(thread) = self.server.get_thread(thread_id).await {
+            let _ = thread.submit(Op::Shutdown).await;
+        }
+    }
+
+    /// Requests shutdown for a loaded thread, removes it from the thread manager, and stops its
+    /// event listener task.
+    async fn shutdown_and_remove_thread(&mut self, thread_id: ThreadId) {
+        self.request_thread_shutdown(thread_id).await;
+        self.server.remove_thread(&thread_id).await;
+        self.abort_thread_event_listener(thread_id);
     }
 
     fn abort_thread_event_listener(&mut self, thread_id: ThreadId) {
@@ -1396,7 +1406,7 @@ impl App {
             .agent_navigation
             .active_agent_label(self.current_displayed_thread_id(), self.primary_thread_id);
         self.chat_widget.set_active_agent_label(label);
-        self.sync_btw_footer_hint();
+        self.sync_btw_thread_ui();
     }
 
     /// Registers an already-running thread with the TUI without replacing the current session.
@@ -1410,19 +1420,22 @@ impl App {
         thread_id: ThreadId,
         thread: Arc<codex_core::CodexThread>,
         session_configured: SessionConfiguredEvent,
-        show_in_agent_picker: bool,
+        visibility: AgentPickerVisibility,
     ) -> Result<()> {
         if self.thread_event_channels.contains_key(&thread_id) {
             return Ok(());
         }
         let config_snapshot = thread.config_snapshot().await;
-        if show_in_agent_picker {
-            self.upsert_agent_picker_thread(
-                thread_id,
-                config_snapshot.session_source.get_nickname(),
-                config_snapshot.session_source.get_agent_role(),
-                false,
-            );
+        match visibility {
+            AgentPickerVisibility::Hidden => {}
+            AgentPickerVisibility::ShowInAgentPicker => {
+                self.upsert_agent_picker_thread(
+                    thread_id,
+                    config_snapshot.session_source.get_nickname(),
+                    config_snapshot.session_source.get_agent_role(),
+                    false,
+                );
+            }
         }
         let event = Event {
             id: String::new(),
@@ -1788,35 +1801,7 @@ impl App {
         if self.active_thread_id == Some(thread_id) {
             return Ok(());
         }
-        let mut btw_threads_to_discard = Vec::new();
-        if let Some(mut btw_thread_id) = self.current_displayed_thread_id()
-            && self.btw_threads.contains_key(&btw_thread_id)
-            && self
-                .btw_threads
-                .get(&thread_id)
-                .map(|state| state.return_thread_id)
-                != Some(btw_thread_id)
-        {
-            // Selecting the immediate return thread should keep that ancestor reachable. Only
-            // discard the BTW suffix that becomes unreachable after the replacement thread is
-            // fully attached and replayed.
-            loop {
-                btw_threads_to_discard.push(btw_thread_id);
-                let Some(parent_thread_id) = self
-                    .btw_threads
-                    .get(&btw_thread_id)
-                    .map(|state| state.return_thread_id)
-                else {
-                    break;
-                };
-                if parent_thread_id == thread_id
-                    || !self.btw_threads.contains_key(&parent_thread_id)
-                {
-                    break;
-                }
-                btw_thread_id = parent_thread_id;
-            }
-        }
+        let btw_threads_to_discard = self.btw_threads_to_discard_after_switch(thread_id);
 
         let live_thread = match self.server.get_thread(thread_id).await {
             Ok(thread) => Some(thread),
@@ -1849,18 +1834,18 @@ impl App {
         self.active_thread_id = Some(thread_id);
         self.active_thread_rx = Some(receiver);
 
-        let mut init = self.chatwidget_init_for_forked_or_resumed_thread(tui, self.config.clone());
-        init.pending_fork_banner_label = self
-            .btw_threads
-            .get(&thread_id)
-            .and_then(|state| state.pending_fork_banner_label.clone());
+        let init = self.chatwidget_init_for_forked_or_resumed_thread(tui, self.config.clone());
         let codex_op_tx = if let Some(thread) = live_thread {
             crate::chatwidget::spawn_op_forwarder(thread)
         } else {
             let (tx, _rx) = unbounded_channel();
             tx
         };
+        let next_btw_fork_banner_parent_label =
+            self.take_next_btw_fork_banner_parent_label(thread_id);
         self.chat_widget = ChatWidget::new_with_op_sender(init, codex_op_tx);
+        self.chat_widget
+            .set_next_fork_banner_parent_label(next_btw_fork_banner_parent_label);
         self.sync_active_agent_label();
 
         self.reset_for_thread_switch(tui)?;
@@ -1873,9 +1858,6 @@ impl App {
         }
         self.drain_active_thread_events(tui).await?;
         self.refresh_pending_thread_approvals().await;
-        if let Some(state) = self.btw_threads.get_mut(&thread_id) {
-            state.pending_fork_banner_label = None;
-        }
         for btw_thread_id in btw_threads_to_discard {
             self.discard_btw_thread(btw_thread_id).await;
         }
@@ -1942,7 +1924,6 @@ impl App {
             app_event_tx: self.app_event_tx.clone(),
             // New sessions start without prefilled message content.
             initial_user_message: None,
-            pending_fork_banner_label: None,
             enhanced_keys_supported: self.enhanced_keys_supported,
             auth_manager: self.auth_manager.clone(),
             models_manager: self.server.get_models_manager(),
@@ -2179,7 +2160,6 @@ impl App {
                         // CLI prompt args are plain strings, so they don't provide element ranges.
                         Vec::new(),
                     ),
-                    pending_fork_banner_label: None,
                     enhanced_keys_supported,
                     auth_manager: auth_manager.clone(),
                     models_manager: thread_manager.get_models_manager(),
@@ -2216,7 +2196,6 @@ impl App {
                         // CLI prompt args are plain strings, so they don't provide element ranges.
                         Vec::new(),
                     ),
-                    pending_fork_banner_label: None,
                     enhanced_keys_supported,
                     auth_manager: auth_manager.clone(),
                     models_manager: thread_manager.get_models_manager(),
@@ -2259,7 +2238,6 @@ impl App {
                         // CLI prompt args are plain strings, so they don't provide element ranges.
                         Vec::new(),
                     ),
-                    pending_fork_banner_label: None,
                     enhanced_keys_supported,
                     auth_manager: auth_manager.clone(),
                     models_manager: thread_manager.get_models_manager(),
@@ -2398,9 +2376,15 @@ impl App {
                         waiting_for_initial_session_configured,
                         app.active_thread_rx.is_some()
                     ) => {
-                        match app.handle_active_thread_stream_event(tui, active).await {
-                            Ok(control) => control,
-                            Err(err) => break Err(err),
+                        match active {
+                            Some(event) => match app.handle_active_thread_event(tui, event).await {
+                                Ok(control) => control,
+                                Err(err) => break Err(err),
+                            },
+                            None => {
+                                app.clear_active_thread().await;
+                                AppRunControl::Continue
+                            }
                         }
                     }
                     Some(event) = tui_events.next() => {
@@ -2602,7 +2586,8 @@ impl App {
                             .await
                         {
                             Ok(resumed) => {
-                                self.shutdown_loaded_threads_except(resumed.thread_id).await;
+                                self.shutdown_attached_threads_except(resumed.thread_id)
+                                    .await;
                                 self.config = resume_config;
                                 tui.set_notification_method(self.config.tui_notification_method);
                                 self.file_search.update_search_dir(self.config.cwd.clone());
@@ -2676,7 +2661,8 @@ impl App {
                             .await
                         {
                             Ok(forked) => {
-                                self.shutdown_loaded_threads_except(forked.thread_id).await;
+                                self.shutdown_attached_threads_except(forked.thread_id)
+                                    .await;
                                 let init = self.chatwidget_init_for_forked_or_resumed_thread(
                                     tui,
                                     self.config.clone(),
@@ -3982,19 +3968,6 @@ impl App {
         Ok(AppRunControl::Continue)
     }
 
-    async fn handle_active_thread_stream_event(
-        &mut self,
-        tui: &mut tui::Tui,
-        event: Option<Event>,
-    ) -> Result<AppRunControl> {
-        if let Some(event) = event {
-            self.handle_active_thread_event(tui, event).await
-        } else {
-            self.clear_active_thread().await;
-            Ok(AppRunControl::Continue)
-        }
-    }
-
     async fn handle_thread_created(&mut self, thread_id: ThreadId) -> Result<()> {
         if self.thread_event_channels.contains_key(&thread_id) {
             return Ok(());
@@ -4007,12 +3980,6 @@ impl App {
             }
         };
         let config_snapshot = thread.config_snapshot().await;
-        self.upsert_agent_picker_thread(
-            thread_id,
-            config_snapshot.session_source.get_nickname(),
-            config_snapshot.session_source.get_agent_role(),
-            /*is_closed*/ false,
-        );
         let event = Event {
             id: String::new(),
             msg: EventMsg::SessionConfigured(SessionConfiguredEvent {
@@ -4037,8 +4004,13 @@ impl App {
         let EventMsg::SessionConfigured(session_configured) = event.msg else {
             unreachable!("thread-created event must be session-configured");
         };
-        self.attach_live_thread(thread_id, thread, session_configured, true)
-            .await
+        self.attach_live_thread(
+            thread_id,
+            thread,
+            session_configured,
+            AgentPickerVisibility::ShowInAgentPicker,
+        )
+        .await
     }
 
     fn reasoning_label(reasoning_effort: Option<ReasoningEffortConfig>) -> &'static str {
@@ -4264,12 +4236,7 @@ impl App {
                 kind: KeyEventKind::Press | KeyEventKind::Repeat,
                 ..
             } => {
-                if self.overlay.is_none()
-                    && self.chat_widget.no_modal_or_popup_active()
-                    && self.chat_widget.composer_is_empty()
-                    && let Some(parent_thread_id) = self.active_btw_return_thread()
-                {
-                    let _ = self.select_agent_thread(tui, parent_thread_id).await;
+                if self.maybe_return_from_btw(tui).await {
                 } else {
                     self.chat_widget.handle_key_event(key_event);
                 }
@@ -4279,12 +4246,7 @@ impl App {
                 kind: KeyEventKind::Press | KeyEventKind::Repeat,
                 ..
             } => {
-                if self.overlay.is_none()
-                    && self.chat_widget.no_modal_or_popup_active()
-                    && self.chat_widget.composer_is_empty()
-                    && let Some(parent_thread_id) = self.active_btw_return_thread()
-                {
-                    let _ = self.select_agent_thread(tui, parent_thread_id).await;
+                if self.maybe_return_from_btw(tui).await {
                 } else if self.chat_widget.is_normal_backtrack_mode()
                     && self.chat_widget.composer_is_empty()
                 {
@@ -5632,89 +5594,6 @@ mod tests {
             })
         );
 
-        let cell = match app_event_rx.try_recv() {
-            Ok(AppEvent::InsertHistoryCell(cell)) => cell,
-            other => panic!("expected InsertHistoryCell event, got {other:?}"),
-        };
-        let rendered = cell
-            .display_lines(120)
-            .into_iter()
-            .map(|line| line.to_string())
-            .collect::<Vec<_>>()
-            .join("\n");
-        assert!(rendered.contains("Permissions updated to Guardian Approvals"));
-
-        let config = std::fs::read_to_string(codex_home.path().join("config.toml"))?;
-        assert!(config.contains("guardian_approval = true"));
-        assert!(config.contains("approvals_reviewer = \"guardian_subagent\""));
-        assert!(config.contains("approval_policy = \"on-request\""));
-        assert!(config.contains("sandbox_mode = \"workspace-write\""));
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn update_feature_flags_enabling_guardian_persists_only_the_feature_flag() -> Result<()> {
-        let (mut app, mut app_event_rx, mut op_rx) = make_test_app_with_channels().await;
-        let codex_home = tempdir()?;
-        app.config.codex_home = codex_home.path().to_path_buf();
-        let guardian_approvals = super::guardian_approvals_mode();
-
-        app.update_feature_flags(vec![(Feature::GuardianApproval, true)])
-            .await;
-
-        assert!(app.config.features.enabled(Feature::GuardianApproval));
-        assert!(
-            app.chat_widget
-                .config_ref()
-                .features
-                .enabled(Feature::GuardianApproval)
-        );
-        assert_eq!(
-            app.config.approvals_reviewer,
-            guardian_approvals.approvals_reviewer
-        );
-        assert_eq!(
-            app.config.permissions.approval_policy.value(),
-            guardian_approvals.approval_policy
-        );
-        assert_eq!(
-            app.chat_widget
-                .config_ref()
-                .permissions
-                .approval_policy
-                .value(),
-            guardian_approvals.approval_policy
-        );
-        assert_eq!(
-            app.chat_widget
-                .config_ref()
-                .permissions
-                .sandbox_policy
-                .get(),
-            &guardian_approvals.sandbox_policy
-        );
-        assert_eq!(
-            app.chat_widget.config_ref().approvals_reviewer,
-            guardian_approvals.approvals_reviewer
-        );
-        assert_eq!(app.runtime_approval_policy_override, None);
-        assert_eq!(app.runtime_sandbox_policy_override, None);
-        assert_eq!(
-            op_rx.try_recv(),
-            Ok(Op::OverrideTurnContext {
-                cwd: None,
-                approval_policy: Some(guardian_approvals.approval_policy),
-                approvals_reviewer: Some(guardian_approvals.approvals_reviewer),
-                sandbox_policy: Some(guardian_approvals.sandbox_policy.clone()),
-                windows_sandbox_level: None,
-                model: None,
-                effort: None,
-                summary: None,
-                service_tier: None,
-                collaboration_mode: None,
-                personality: None,
-            })
-        );
         let cell = match app_event_rx.try_recv() {
             Ok(AppEvent::InsertHistoryCell(cell)) => cell,
             other => panic!("expected InsertHistoryCell event, got {other:?}"),
@@ -7782,33 +7661,6 @@ guardian_approval = true
                 },
             )
             .await?;
-        assert!(matches!(
-            control,
-            AppRunControl::Exit(ExitReason::UserRequested)
-        ));
-        assert_eq!(app.pending_shutdown_exit_thread_id, None);
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn active_thread_stream_event_propagates_shutdown_exit() -> Result<()> {
-        let (mut app, _app_event_rx, _op_rx) = make_test_app_with_channels().await;
-        let mut tui = make_test_tui();
-        let thread_id = ThreadId::new();
-        app.active_thread_id = Some(thread_id);
-        app.primary_thread_id = Some(thread_id);
-        app.pending_shutdown_exit_thread_id = Some(thread_id);
-
-        let control = app
-            .handle_active_thread_stream_event(
-                &mut tui,
-                Some(Event {
-                    id: "shutdown-complete".to_string(),
-                    msg: EventMsg::ShutdownComplete,
-                }),
-            )
-            .await?;
-
         assert!(matches!(
             control,
             AppRunControl::Exit(ExitReason::UserRequested)

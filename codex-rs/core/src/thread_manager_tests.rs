@@ -6,7 +6,7 @@ use crate::models_manager::collaboration_mode_presets::CollaborationModesConfig;
 use crate::models_manager::manager::RefreshStrategy;
 use crate::rollout::RolloutRecorder;
 use crate::rollout::RolloutRecorderParams;
-use crate::tasks::interrupted_turn_marker;
+use crate::tasks::interrupted_turn_history_marker;
 use assert_matches::assert_matches;
 use codex_protocol::models::BaseInstructions;
 use codex_protocol::models::ContentItem;
@@ -192,7 +192,7 @@ async fn new_uses_configured_openai_provider_for_model_refresh() {
 }
 
 #[tokio::test]
-async fn fork_thread_with_interrupted_marker_appends_exact_interrupt_marker() {
+async fn fork_thread_from_interrupted_snapshot_replays_exact_interrupt_marker() {
     let temp_dir = tempdir().expect("tempdir");
     let mut config = test_config();
     config.codex_home = temp_dir.path().join("codex-home");
@@ -228,26 +228,30 @@ async fn fork_thread_with_interrupted_marker_appends_exact_interrupt_marker() {
     let parent_rollout_path = recorder.rollout_path().to_path_buf();
 
     let forked = manager
-        .fork_thread_with_interrupted_marker(usize::MAX, config, parent_rollout_path, false, None)
+        .fork_thread_from_interrupted_snapshot(
+            /*nth_user_message*/ usize::MAX,
+            config,
+            parent_rollout_path,
+            /*persist_extended_history*/ false,
+            /*parent_trace*/ None,
+        )
         .await
-        .expect("fork thread with interrupted marker");
+        .expect("fork thread from interrupted snapshot");
     let child_rollout_path = forked
         .session_configured
         .rollout_path
         .clone()
-        .expect("child rollout path");
-    let child_items = RolloutRecorder::get_rollout_history(&child_rollout_path)
+        .expect("forked thread rollout path");
+    let child_history = RolloutRecorder::get_rollout_history(&child_rollout_path)
         .await
-        .expect("read child rollout")
+        .expect("read child rollout history")
         .get_rollout_items();
-    let expected_marker =
-        serde_json::to_value(RolloutItem::ResponseItem(interrupted_turn_marker())).unwrap();
 
     assert!(
-        child_items
-            .iter()
-            .map(serde_json::to_value)
-            .any(|item| item.unwrap() == expected_marker),
-        "expected child rollout to contain the exact interrupted-turn marker, got {child_items:?}"
+        child_history.into_iter().any(|item| matches!(
+            item,
+            RolloutItem::ResponseItem(item) if item == interrupted_turn_history_marker()
+        )),
+        "expected child rollout history to contain the exact interrupted-turn marker"
     );
 }
