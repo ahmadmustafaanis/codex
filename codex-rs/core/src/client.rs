@@ -325,7 +325,7 @@ impl ModelClient {
             warn!("falling back to HTTP");
             session_telemetry.counter(
                 "codex.transport.fallback_to_http",
-                1,
+                /*inc*/ 1,
                 &[("from_wire_api", "responses_websocket")],
             );
         }
@@ -672,7 +672,8 @@ impl ModelClientSession {
         self.websocket_session.connection = None;
         self.websocket_session.last_request = None;
         self.websocket_session.last_response_rx = None;
-        self.websocket_session.set_connection_reused(false);
+        self.websocket_session
+            .set_connection_reused(/*connection_reused*/ false);
     }
 
     fn build_responses_request(
