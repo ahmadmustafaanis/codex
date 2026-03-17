@@ -97,7 +97,6 @@ use std::path::PathBuf;
 use crate::config::permissions::compile_permission_profile;
 use crate::config::permissions::merge_permission_profile_toml;
 use crate::config::permissions::network_proxy_config_from_profile_network;
-use crate::config::permissions::permission_profile_toml_from_effective_permissions;
 use crate::config::permissions::permission_profile_toml_from_runtime_permissions;
 use crate::config::profile::ConfigProfile;
 use codex_network_proxy::NetworkProxyConfig;
@@ -2887,71 +2886,23 @@ pub(crate) fn default_permissions_profile_name(config: &Config) -> Option<String
         .and_then(|selection| selection.default_permissions)
 }
 
-pub(crate) fn next_default_permissions_profile_name(config: &Config) -> String {
-    let permissions = config
-        .config_layer_stack
-        .effective_config()
-        .try_into::<ConfigToml>()
-        .ok()
-        .and_then(|config_toml| config_toml.permissions)
-        .unwrap_or_default();
-
-    let base = "default".to_string();
-    if !permissions.entries.contains_key(&base) {
-        return base;
-    }
-
-    let mut suffix = 2;
-    loop {
-        let candidate = format!("default-{suffix}");
-        if !permissions.entries.contains_key(&candidate) {
-            return candidate;
-        }
-        suffix += 1;
-    }
-}
-
 pub(crate) async fn persist_granted_permission_profile(
     codex_home: &Path,
     config: &Config,
     granted_permissions: &PermissionProfile,
 ) -> anyhow::Result<String> {
     let granted_profile = permission_profile_toml_from_runtime_permissions(granted_permissions);
-    let default_permissions = default_permissions_profile_name(config);
-    let (profile_name, profile) = if let Some(profile_name) = default_permissions {
-        let existing = config
-            .config_layer_stack
-            .effective_config()
-            .try_into::<ConfigToml>()
-            .ok()
-            .and_then(|config_toml| config_toml.permissions)
-            .and_then(|permissions| permissions.entries.get(&profile_name).cloned());
-        (
-            profile_name,
-            merge_permission_profile_toml(existing.as_ref(), &granted_profile),
-        )
-    } else {
-        let profile_name = next_default_permissions_profile_name(config);
-        let default_network_config = NetworkProxyConfig::default();
-        let network_config = config
-            .permissions
-            .network
-            .as_ref()
-            .map(NetworkProxySpec::config)
-            .unwrap_or(&default_network_config);
-        let baseline_profile = permission_profile_toml_from_effective_permissions(
-            &config.permissions.file_system_sandbox_policy,
-            network_config,
-            config
-                .permissions
-                .macos_seatbelt_profile_extensions
-                .as_ref(),
-        )?;
-        (
-            profile_name,
-            merge_permission_profile_toml(Some(&baseline_profile), &granted_profile),
-        )
+    let Some(profile_name) = default_permissions_profile_name(config) else {
+        anyhow::bail!("cannot persist granted permissions without `default_permissions`");
     };
+    let existing = config
+        .config_layer_stack
+        .effective_config()
+        .try_into::<ConfigToml>()
+        .ok()
+        .and_then(|config_toml| config_toml.permissions)
+        .and_then(|permissions| permissions.entries.get(&profile_name).cloned());
+    let profile = merge_permission_profile_toml(existing.as_ref(), &granted_profile);
 
     ConfigEditsBuilder::new(codex_home)
         .set_permission_profile(&profile_name, &profile, true)

@@ -289,24 +289,6 @@ pub(crate) fn permission_profile_toml_from_runtime_permissions(
     }
 }
 
-pub(crate) fn permission_profile_toml_from_effective_permissions(
-    file_system: &FileSystemSandboxPolicy,
-    network: &NetworkProxyConfig,
-    macos: Option<&MacOsSeatbeltProfileExtensions>,
-) -> io::Result<PermissionProfileToml> {
-    let filesystem = filesystem_permissions_toml_from_policy(file_system)?;
-    let network = network_toml_from_proxy_config(network);
-    let macos = macos
-        .map(macos_permissions_toml_from_runtime)
-        .filter(macos_permissions_toml_has_values);
-
-    Ok(PermissionProfileToml {
-        filesystem: Some(filesystem).filter(|filesystem| !filesystem.is_empty()),
-        network: Some(network).filter(network_toml_has_values),
-        macos,
-    })
-}
-
 fn filesystem_permissions_toml_from_runtime(
     permissions: &FileSystemPermissions,
 ) -> FilesystemPermissionsToml {
@@ -334,124 +316,10 @@ fn filesystem_permissions_toml_from_runtime(
     FilesystemPermissionsToml { entries }
 }
 
-fn filesystem_permissions_toml_from_policy(
-    policy: &FileSystemSandboxPolicy,
-) -> io::Result<FilesystemPermissionsToml> {
-    let mut entries = BTreeMap::new();
-
-    if policy.has_full_disk_write_access() {
-        entries.insert(
-            ":root".to_string(),
-            FilesystemPermissionToml::Access(FileSystemAccessMode::Write),
-        );
-    }
-
-    for entry in &policy.entries {
-        let (path, permission) = filesystem_permission_toml_from_entry(entry)?;
-        merge_filesystem_permission_entry(&mut entries, &path, permission);
-    }
-
-    Ok(FilesystemPermissionsToml { entries })
-}
-
-fn filesystem_permission_toml_from_entry(
-    entry: &FileSystemSandboxEntry,
-) -> io::Result<(String, FilesystemPermissionToml)> {
-    let access = entry.access;
-    match &entry.path {
-        FileSystemPath::Path { path } => Ok((
-            path.to_string_lossy().to_string(),
-            FilesystemPermissionToml::Access(access),
-        )),
-        FileSystemPath::Special { value } => match value {
-            FileSystemSpecialPath::Root => Ok((
-                ":root".to_string(),
-                FilesystemPermissionToml::Access(access),
-            )),
-            FileSystemSpecialPath::Minimal => Ok((
-                ":minimal".to_string(),
-                FilesystemPermissionToml::Access(access),
-            )),
-            FileSystemSpecialPath::CurrentWorkingDirectory => {
-                Ok((":cwd".to_string(), FilesystemPermissionToml::Access(access)))
-            }
-            FileSystemSpecialPath::ProjectRoots { subpath: None } => Ok((
-                ":project_roots".to_string(),
-                FilesystemPermissionToml::Access(access),
-            )),
-            FileSystemSpecialPath::ProjectRoots {
-                subpath: Some(subpath),
-            } => Ok((
-                ":project_roots".to_string(),
-                FilesystemPermissionToml::Scoped(BTreeMap::from([(
-                    subpath.to_string_lossy().to_string(),
-                    access,
-                )])),
-            )),
-            FileSystemSpecialPath::Tmpdir => Ok((
-                ":tmpdir".to_string(),
-                FilesystemPermissionToml::Access(access),
-            )),
-            FileSystemSpecialPath::SlashTmp => Ok((
-                ":slash_tmp".to_string(),
-                FilesystemPermissionToml::Access(access),
-            )),
-            FileSystemSpecialPath::Unknown {
-                path,
-                subpath: None,
-            } => Ok((path.clone(), FilesystemPermissionToml::Access(access))),
-            FileSystemSpecialPath::Unknown {
-                path,
-                subpath: Some(subpath),
-            } => Ok((
-                path.clone(),
-                FilesystemPermissionToml::Scoped(BTreeMap::from([(
-                    subpath.to_string_lossy().to_string(),
-                    access,
-                )])),
-            )),
-        },
-    }
-}
-
 fn network_toml_from_runtime(permissions: &NetworkPermissions) -> NetworkToml {
     NetworkToml {
         enabled: permissions.enabled,
         ..Default::default()
-    }
-}
-
-fn network_toml_from_proxy_config(config: &NetworkProxyConfig) -> NetworkToml {
-    let defaults = NetworkProxyConfig::default();
-    NetworkToml {
-        enabled: config.network.enabled.then_some(true),
-        proxy_url: (config.network.proxy_url != defaults.network.proxy_url)
-            .then(|| config.network.proxy_url.clone()),
-        enable_socks5: (config.network.enable_socks5 != defaults.network.enable_socks5)
-            .then_some(config.network.enable_socks5),
-        socks_url: (config.network.socks_url != defaults.network.socks_url)
-            .then(|| config.network.socks_url.clone()),
-        enable_socks5_udp: (config.network.enable_socks5_udp != defaults.network.enable_socks5_udp)
-            .then_some(config.network.enable_socks5_udp),
-        allow_upstream_proxy: (config.network.allow_upstream_proxy
-            != defaults.network.allow_upstream_proxy)
-            .then_some(config.network.allow_upstream_proxy),
-        dangerously_allow_non_loopback_proxy: (config.network.dangerously_allow_non_loopback_proxy
-            != defaults.network.dangerously_allow_non_loopback_proxy)
-            .then_some(config.network.dangerously_allow_non_loopback_proxy),
-        dangerously_allow_all_unix_sockets: (config.network.dangerously_allow_all_unix_sockets
-            != defaults.network.dangerously_allow_all_unix_sockets)
-            .then_some(config.network.dangerously_allow_all_unix_sockets),
-        mode: (config.network.mode != defaults.network.mode).then_some(config.network.mode),
-        allowed_domains: Some(config.network.allowed_domains.clone())
-            .filter(|allowed_domains| !allowed_domains.is_empty()),
-        denied_domains: Some(config.network.denied_domains.clone())
-            .filter(|denied_domains| !denied_domains.is_empty()),
-        allow_unix_sockets: Some(config.network.allow_unix_sockets.clone())
-            .filter(|allow_unix_sockets| !allow_unix_sockets.is_empty()),
-        allow_local_binding: (config.network.allow_local_binding
-            != defaults.network.allow_local_binding)
-            .then_some(config.network.allow_local_binding),
     }
 }
 

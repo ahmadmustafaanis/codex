@@ -2657,11 +2657,7 @@ async fn notify_request_permissions_response_persists_always_allow_permissions()
         PermissionGrantScope::AlwaysAllow
     );
 
-    let serialized = std::fs::read_to_string(session.codex_home().await.join(CONFIG_TOML_FILE))
-        .expect("config.toml should exist");
-    let config_toml: crate::config::ConfigToml =
-        toml::from_str(&serialized).expect("config.toml should parse");
-    assert_eq!(config_toml.default_permissions.as_deref(), Some("default"));
+    assert!(!session.codex_home().await.join(CONFIG_TOML_FILE).exists());
 }
 
 #[tokio::test]

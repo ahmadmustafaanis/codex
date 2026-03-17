@@ -3188,7 +3188,7 @@ impl Session {
             )
             .await
             {
-                warn!("failed to persist granted permissions: {err}");
+                error!("failed to persist granted permissions: {err}");
             } else {
                 self.reload_user_config_layer().await;
             }

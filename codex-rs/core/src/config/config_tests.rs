@@ -25,7 +25,6 @@ use codex_protocol::models::PermissionProfile;
 use codex_protocol::permissions::FileSystemAccessMode;
 use codex_protocol::permissions::FileSystemPath;
 use codex_protocol::permissions::FileSystemSandboxEntry;
-use codex_protocol::permissions::FileSystemSandboxKind;
 use codex_protocol::permissions::FileSystemSandboxPolicy;
 use codex_protocol::permissions::FileSystemSpecialPath;
 use codex_protocol::permissions::NetworkSandboxPolicy;
@@ -6173,8 +6172,7 @@ calendar = true
 }
 
 #[tokio::test]
-async fn persist_granted_permission_profile_creates_default_profile_from_legacy_config()
--> anyhow::Result<()> {
+async fn persist_granted_permission_profile_requires_default_permissions() -> anyhow::Result<()> {
     let codex_home = TempDir::new()?;
     let cwd = TempDir::new()?;
     std::fs::write(cwd.path().join(".git"), "gitdir: nowhere")?;
@@ -6183,11 +6181,6 @@ async fn persist_granted_permission_profile_creates_default_profile_from_legacy_
         toml::from_str(
             r#"
 sandbox_mode = "workspace-write"
-
-[sandbox_workspace_write]
-network_access = true
-exclude_tmpdir_env_var = false
-exclude_slash_tmp = false
 "#,
         )
         .expect("config should deserialize"),
@@ -6198,7 +6191,7 @@ exclude_slash_tmp = false
         codex_home.path().to_path_buf(),
     )?;
 
-    let profile_name = persist_granted_permission_profile(
+    let err = persist_granted_permission_profile(
         codex_home.path(),
         &config,
         &PermissionProfile {
@@ -6222,146 +6215,14 @@ exclude_slash_tmp = false
             }),
         },
     )
-    .await?;
-
-    assert_eq!(profile_name, "default");
-
-    let serialized = tokio::fs::read_to_string(codex_home.path().join(CONFIG_TOML_FILE)).await?;
-    let parsed: ConfigToml = toml::from_str(&serialized)?;
-
-    assert_eq!(parsed.default_permissions.as_deref(), Some("default"));
-    let profile = parsed
-        .permissions
-        .as_ref()
-        .expect("permissions should be written")
-        .entries
-        .get("default")
-        .cloned()
-        .expect("default profile should exist");
-    let memories_root = AbsolutePathBuf::try_from(codex_home.path().join("memories"))?;
+    .await
+    .expect_err("missing default_permissions should not persist grants");
 
     assert_eq!(
-        profile.filesystem,
-        Some(FilesystemPermissionsToml {
-            entries: BTreeMap::from([
-                (
-                    ":root".to_string(),
-                    FilesystemPermissionToml::Access(FileSystemAccessMode::Read),
-                ),
-                (
-                    ":cwd".to_string(),
-                    FilesystemPermissionToml::Access(FileSystemAccessMode::Write),
-                ),
-                (
-                    ":slash_tmp".to_string(),
-                    FilesystemPermissionToml::Access(FileSystemAccessMode::Write),
-                ),
-                (
-                    ":tmpdir".to_string(),
-                    FilesystemPermissionToml::Access(FileSystemAccessMode::Write),
-                ),
-                (
-                    memories_root.to_string_lossy().to_string(),
-                    FilesystemPermissionToml::Access(FileSystemAccessMode::Write),
-                ),
-                (
-                    AbsolutePathBuf::try_from(cwd.path().join("logs"))?
-                        .to_string_lossy()
-                        .to_string(),
-                    FilesystemPermissionToml::Access(FileSystemAccessMode::Write),
-                ),
-            ]),
-        })
+        err.to_string(),
+        "cannot persist granted permissions without `default_permissions`"
     );
-    assert_eq!(
-        profile.network,
-        Some(NetworkToml {
-            enabled: Some(true),
-            ..Default::default()
-        })
-    );
-    assert_eq!(
-        profile.macos,
-        Some(MacOsPermissionsToml {
-            preferences: Some(MacOsPreferencesPermission::ReadWrite),
-            automations: Some(MacOsAutomationPermission::BundleIds(vec![
-                "com.apple.Calendar".to_string(),
-            ])),
-            launch_services: Some(false),
-            accessibility: Some(true),
-            calendar: Some(false),
-            reminders: Some(false),
-            contacts: Some(MacOsContactsPermission::None),
-        })
-    );
-
-    Ok(())
-}
-
-#[tokio::test]
-async fn persist_granted_permission_profile_preserves_unrestricted_legacy_default()
--> anyhow::Result<()> {
-    let codex_home = TempDir::new()?;
-    let cwd = TempDir::new()?;
-    std::fs::write(cwd.path().join(".git"), "gitdir: nowhere")?;
-
-    let config = Config::load_from_base_config_with_overrides(
-        toml::from_str(
-            r#"
-sandbox_mode = "danger-full-access"
-"#,
-        )
-        .expect("config should deserialize"),
-        ConfigOverrides {
-            cwd: Some(cwd.path().to_path_buf()),
-            ..Default::default()
-        },
-        codex_home.path().to_path_buf(),
-    )?;
-
-    let profile_name = persist_granted_permission_profile(
-        codex_home.path(),
-        &config,
-        &PermissionProfile::default(),
-    )
-    .await?;
-
-    assert_eq!(profile_name, "default");
-
-    let serialized = tokio::fs::read_to_string(codex_home.path().join(CONFIG_TOML_FILE)).await?;
-    let parsed: ConfigToml = toml::from_str(&serialized)?;
-    let profile = parsed
-        .permissions
-        .as_ref()
-        .expect("permissions should be written")
-        .entries
-        .get("default")
-        .cloned()
-        .expect("default profile should exist");
-
-    assert_eq!(
-        profile.filesystem,
-        Some(FilesystemPermissionsToml {
-            entries: BTreeMap::from([(
-                ":root".to_string(),
-                FilesystemPermissionToml::Access(FileSystemAccessMode::Write),
-            )]),
-        })
-    );
-
-    let reloaded = Config::load_from_base_config_with_overrides(
-        parsed,
-        ConfigOverrides {
-            cwd: Some(cwd.path().to_path_buf()),
-            ..Default::default()
-        },
-        codex_home.path().to_path_buf(),
-    )?;
-
-    assert_eq!(
-        reloaded.permissions.file_system_sandbox_policy.kind,
-        FileSystemSandboxKind::Unrestricted
-    );
+    assert!(!codex_home.path().join(CONFIG_TOML_FILE).exists());
 
     Ok(())
 }
