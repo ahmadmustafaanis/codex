@@ -19,12 +19,7 @@ use codex_protocol::ThreadId;
 use codex_protocol::models::FileSystemPermissions;
 use codex_protocol::models::FunctionCallOutputBody;
 use codex_protocol::models::FunctionCallOutputPayload;
-use codex_protocol::models::MacOsAutomationPermission;
-use codex_protocol::models::MacOsContactsPermission;
-use codex_protocol::models::MacOsPreferencesPermission;
-use codex_protocol::models::MacOsSeatbeltProfileExtensions;
 use codex_protocol::models::NetworkPermissions;
-use codex_protocol::models::PermissionProfile;
 use codex_protocol::permissions::FileSystemAccessMode;
 use codex_protocol::permissions::FileSystemPath;
 use codex_protocol::permissions::FileSystemSandboxEntry;
@@ -2629,7 +2624,7 @@ async fn notify_request_permissions_response_persists_always_allow_permissions()
         .insert_pending_request_permissions("call-1".to_string(), tx);
     *session.active_turn.lock().await = Some(active_turn);
 
-    let permissions = PermissionProfile {
+    let permissions = RequestPermissionProfile {
         network: Some(NetworkPermissions {
             enabled: Some(true),
         }),
@@ -2639,17 +2634,6 @@ async fn notify_request_permissions_response_persists_always_allow_permissions()
                 AbsolutePathBuf::try_from(session.codex_home().await.join("allowed"))
                     .expect("absolute path"),
             ]),
-        }),
-        macos: Some(MacOsSeatbeltProfileExtensions {
-            macos_preferences: MacOsPreferencesPermission::ReadWrite,
-            macos_automation: MacOsAutomationPermission::BundleIds(vec![
-                "com.apple.Calendar".to_string(),
-            ]),
-            macos_launch_services: false,
-            macos_accessibility: true,
-            macos_calendar: false,
-            macos_reminders: false,
-            macos_contacts: MacOsContactsPermission::None,
         }),
     };
 
@@ -2666,7 +2650,7 @@ async fn notify_request_permissions_response_persists_always_allow_permissions()
     assert_eq!(session.granted_turn_permissions().await, None);
     assert_eq!(
         session.granted_session_permissions().await,
-        Some(permissions)
+        Some(permissions.clone().into())
     );
     assert_eq!(
         rx.await.expect("response should be delivered").scope,

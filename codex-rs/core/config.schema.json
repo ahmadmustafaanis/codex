@@ -776,6 +776,14 @@
       ],
       "type": "string"
     },
+    "MacOsContactsPermission": {
+      "enum": [
+        "none",
+        "read_only",
+        "read_write"
+      ],
+      "type": "string"
+    },
     "MacOsPermissionsToml": {
       "additionalProperties": false,
       "properties": {
@@ -788,8 +796,17 @@
         "calendar": {
           "type": "boolean"
         },
+        "contacts": {
+          "$ref": "#/definitions/MacOsContactsPermission"
+        },
+        "launch_services": {
+          "type": "boolean"
+        },
         "preferences": {
           "$ref": "#/definitions/MacOsPreferencesPermission"
+        },
+        "reminders": {
+          "type": "boolean"
         }
       },
       "type": "object"

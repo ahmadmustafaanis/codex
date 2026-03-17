@@ -633,8 +633,11 @@ fn network_toml_has_values(network: &NetworkToml) -> bool {
 fn macos_permissions_toml_has_values(permissions: &MacOsPermissionsToml) -> bool {
     permissions.preferences.is_some()
         || permissions.automations.is_some()
+        || permissions.launch_services.is_some()
         || permissions.accessibility.is_some()
         || permissions.calendar.is_some()
+        || permissions.reminders.is_some()
+        || permissions.contacts.is_some()
 }
 
 fn compile_network_sandbox_policy(network: Option<&NetworkToml>) -> NetworkSandboxPolicy {

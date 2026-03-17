@@ -3184,7 +3184,7 @@ impl Session {
             if let Err(err) = persist_granted_permission_profile(
                 self.codex_home().await.as_path(),
                 &config,
-                &permissions,
+                &permissions.clone().into(),
             )
             .await
             {

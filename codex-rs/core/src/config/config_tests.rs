@@ -6122,11 +6122,11 @@ calendar = true
             automations: Some(MacOsAutomationPermission::BundleIds(vec![
                 "com.apple.Calendar".to_string(),
             ])),
-            launch_services: Some(false),
+            launch_services: None,
             accessibility: Some(true),
             calendar: Some(true),
-            reminders: Some(false),
-            contacts: Some(MacOsContactsPermission::None),
+            reminders: None,
+            contacts: None,
         })
     );
 }
